@@ -1,0 +1,5 @@
+# Whitelist. Only the files listed below are tracked; everything else in this folder is a local note.
+*
+!.gitignore
+!README.md
+!ros2-jazzy-migration.md

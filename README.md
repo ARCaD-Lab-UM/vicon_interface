@@ -5,8 +5,8 @@ Vicon ROS2 Python Driver
 # Install
 
 1. Use rosdep to install the ROS dependencies: `rosdep install --from-paths ./ --ignore-src -r -y`
-2. For older ROS2 versions (before Jazzy), execute `sudo apt install ros-humble-tf-transformations` (required by [`tf_transformations`](https://github.com/DLu/tf_transformations))
-3. Platform independent Python3 wrapper for Vicon Datastream SDK: `sudo apt install python3-pip`, then `pip install pyvicon-datastream` (install in system environment)
+2. If step 1 did not install it: `sudo apt install ros-$ROS_DISTRO-tf-transformations` (required by [`tf_transformations`](https://github.com/DLu/tf_transformations))
+3. Platform independent Python3 wrapper for Vicon Datastream SDK: `sudo apt install python3-pip`, then `pip install pyvicon-datastream` (install in system environment; on Ubuntu 24.04 the command is `pip install --break-system-packages pyvicon-datastream`)
 
 # Configure
 

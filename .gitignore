@@ -219,5 +219,11 @@ AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros2,python,visualstudiocode
 
-### Codex ###
-AGENTS.md
+# Misc
+# AGENTS.md
+# CLAUDE.md
+.claude/plans/*
+.claude/my-session-notes/*
+# the stray file Codex may create in the project, not the .codex/ directory
+.codex
+!.codex/
