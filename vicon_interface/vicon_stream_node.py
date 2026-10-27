@@ -174,7 +174,7 @@ class ViconStreamNode(Node):
             .double_array_value
         )
         if len(values) != 3 * n_obj:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"`{name}` must have {3 * n_obj} entries "
                 f"({n_obj} objects x 3); got {len(values)}. Using zeros."
             )
@@ -197,10 +197,10 @@ class ViconStreamNode(Node):
                     framenumber = self.tracker_.vicon_client.get_frame_number()
                     position = self.tracker_._get_object_position(object_name)
                     if latency is None or framenumber is None or not position:
-                        self.get_logger().warn(f"Missing object `{object_name}` data in frame.",throttle_duration_sec=1.0)
+                        self.get_logger().warning(f"Missing object `{object_name}` data in frame.",throttle_duration_sec=1.0)
                         continue
                 else:
-                    self.get_logger().warn(f"Cannot get the frame with `{object_name}`.", throttle_duration_sec=1.0)
+                    self.get_logger().warning(f"Cannot get the frame with `{object_name}`.", throttle_duration_sec=1.0)
                     continue
 
                 grab_time = self.get_clock().now()
@@ -219,7 +219,7 @@ class ViconStreamNode(Node):
                     roll, pitch, yaw = tf_transformations.euler_from_quaternion(q, "sxyz")
                     tracked_object.buffer.add_pose((x, y, z, roll, pitch, yaw), latency)
                 except Exception as e:
-                    self.get_logger().warn(
+                    self.get_logger().warning(
                         f"Vicon dropped a frame for `{object_name}`: {e}",
                         throttle_duration_sec=1.0,
                     )
