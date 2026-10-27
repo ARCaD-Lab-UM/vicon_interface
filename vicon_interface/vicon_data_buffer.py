@@ -90,7 +90,7 @@ class ViconDataBuffer:
 
             time_diff = time_stamp - self.past_times_[-1]
 
-            position = self.past_poses_[-1, :3]
+            position = self.past_poses_[-1, :3].copy()
             roll, pitch, yaw = self.past_poses_[-1, 3:]
             R = tf_transformations.euler_matrix(roll, pitch, yaw, "sxyz")[:3, :3]
             v_world = np.dot(R, self.v_)
@@ -166,7 +166,7 @@ class ViconDataFilter:
 
             time_diff = time_stamp - self.last_time_
 
-            position = self.last_pose_[:3]
+            position = self.last_pose_[:3].copy()
             roll, pitch, yaw = self.last_pose_[3:]
             R = tf_transformations.euler_matrix(roll, pitch, yaw, "sxyz")[:3, :3]
             v_world = np.dot(R, self.v_)
