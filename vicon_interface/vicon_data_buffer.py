@@ -74,13 +74,13 @@ class ViconDataBuffer:
         with self.lock_:
             if len(self.past_poses_) == 0:
                 return np.zeros(6), 0
-            return self.past_poses_[-1], self.past_times_[-1]
+            return self.past_poses_[-1].copy(), self.past_times_[-1]
 
     def get_latest_velocity(self):
         with self.lock_:
             if self.v_ is None:
                 return np.zeros(3), np.zeros(3), 0
-            return self.v_, self.a_, self.past_times_[-1]
+            return self.v_.copy(), self.a_.copy(), self.past_times_[-1]
 
     def get_interpolated_pose(self):
         with self.lock_:
@@ -150,13 +150,13 @@ class ViconDataFilter:
         with self.lock_:
             if self.last_pose_ is None:
                 return np.zeros(6), 0
-            return self.last_pose_, self.last_time_
+            return self.last_pose_.copy(), self.last_time_
 
     def get_latest_velocity(self):
         with self.lock_:
             if self.v_ is None:
                 return np.zeros(3), np.zeros(3), 0
-            return self.v_, self.a_, self.last_time_
+            return self.v_.copy(), self.a_.copy(), self.last_time_
 
     def get_interpolated_pose(self):
         with self.lock_:

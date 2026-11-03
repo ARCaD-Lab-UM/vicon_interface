@@ -58,9 +58,9 @@ velocity and height.
 ## What the node does
 
 - The poll loop is a plain `threading.Thread` running `timer_callback` (a `while True` loop paced by
-  `poll_vicon_dt`), not a ROS timer. The extrapolated odometry comes from a ROS timer at
-  `filtered_odom_dt` in its own callback group under a `MultiThreadedExecutor`. The two threads meet
-  only inside `ViconDataBuffer`, under its lock.
+  `poll_vicon_dt`), not a ROS timer. The extrapolated odometry is a ROS timer at `filtered_odom_dt` in
+  its own callback group under a `MultiThreadedExecutor`. The two threads meet only inside
+  `ViconDataBuffer`, under its lock. Its getters return copies: the node writes clipped values into them.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
   whole rolling window, rotated into the child frame. The orientation rate is an Euler-angle rate, not ω.
