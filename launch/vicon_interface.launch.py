@@ -19,7 +19,6 @@ def generate_launch_description():
                 name="vicon_stream_node",
                 output="screen",
                 parameters=[vicon_interface_param_file],
-                remappings=[("vicon_mpc_state", "/vehicle_state")],
                 emulate_tty=True,
             ),
         ]

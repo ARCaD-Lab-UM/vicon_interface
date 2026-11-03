@@ -49,8 +49,7 @@ velocity and height.
 - `vicon_interface/vicon_data_buffer.py` `ViconDataBuffer`, the per-object rolling window that turns
   poses into velocities and applies the frame offset; `ViconDataFilter`, a first-order low-pass variant
   that the node does not use.
-- `launch/vicon_interface.launch.py` starts the node with `param/vicon_interface.param.yaml`. Its
-  `vicon_mpc_state -> /vehicle_state` remapping matches no topic the node publishes.
+- `launch/vicon_interface.launch.py` starts the node with `param/vicon_interface.param.yaml`.
 - `param/vicon_interface.param.yaml` the only configuration: tracker IP, object names, frames, offsets,
   rates, window size, state clipping, TF switch. Every number lives there.
 - `.agents/` skills and notes. `.claude/skills` and `.codex/skills` are symlinks to `.agents/skills`.
