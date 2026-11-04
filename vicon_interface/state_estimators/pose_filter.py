@@ -100,6 +100,21 @@ class PoseEstimate:
     P_trans: np.ndarray  # covariance of (p, v[, a])
     P_rot: np.ndarray  # covariance of (d, w[, alpha]), d the body-frame error of R
 
+    def odometry_covariances(self):
+        """Return the (pose, twist) 6x6 covariances in nav_msgs/Odometry's conventions.
+
+        pose: position, then rotation about the world axes, in the world frame. twist: linear,
+        then angular velocity, in the body frame. Translation and rotation are independent here.
+        """
+        R = self.R
+        pose = np.zeros((6, 6))
+        pose[:3, :3] = self.P_trans[:3, :3]
+        pose[3:, 3:] = R @ self.P_rot[:3, :3] @ R.T  # body-frame error moved to the world
+        twist = np.zeros((6, 6))
+        twist[:3, :3] = R.T @ self.P_trans[3:6, 3:6] @ R  # world velocity moved to the body
+        twist[3:, 3:] = self.P_rot[3:6, 3:6]
+        return pose, twist
+
 
 class PoseFilter:
     """Pose-only Kalman filter of one rigid body, with the 'cv' or 'ca' model described above."""

@@ -77,8 +77,8 @@ velocity and height.
   `odometry/<obj>` (Odometry, twist in the child frame), `odometry/filtered/<obj>` (Odometry, the
   filtered pose and twist moved to the publish time, twist in the child frame, angular part true ω),
   `vicon_latency/<obj>` (Float32, seconds, the SDK's `get_latency_total()`), and with `publish_tf` one TF
-  `parent_frame_id -> child_frame_id` per object, all objects in one message per frame. The four
-  publishers use QoS depth 1; TF uses the `TransformBroadcaster` default.
+  `parent_frame_id -> child_frame_id` per object, all objects in one message per frame. QoS depth 1,
+  TF the broadcaster's default. Covariances: the raw pose's `kf_measurement_std`, else the filter's.
 - States are clipped to `min_states` / `max_states` (12 entries: xyz, rpy, body v, body ω)
   before publishing, on both odometry topics and the pose.
 - A tracker that does not answer at start is fatal: the constructor raises and the process exits.

@@ -104,6 +104,8 @@ class ViconStreamNode(Node):
         noise_psd = {m: self._read_double_array(f"kf_{m}_noise_psd", 2) for m in ("cv", "ca")}
         self.kf_noise_psd_ = noise_psd[self.kf_motion_model_]
         self.kf_measurement_std_ = self._read_double_array("kf_measurement_std", 2)
+        std_p, std_theta = self.kf_measurement_std_  # m, rad
+        self.pose_covariance_ = np.diag([std_p ** 2] * 3 + [std_theta ** 2] * 3).ravel().tolist()
         self.kf_initial_std_ = self._read_double_array("kf_initial_std", 4)
         self.kf_gate_sigma_ = self._read_double("kf_gate_sigma")
         self.kf_max_rejections_ = (
@@ -356,6 +358,9 @@ class ViconStreamNode(Node):
                 odom_msg.twist.twist.angular.x = ang_v_body[0]
                 odom_msg.twist.twist.angular.y = ang_v_body[1]
                 odom_msg.twist.twist.angular.z = ang_v_body[2]
+                odom_msg.pose.covariance = self.pose_covariance_  # the Vicon pose as measured
+                if self.twist_source_ == "filter" and publish_odom:
+                    odom_msg.twist.covariance = estimate.odometry_covariances()[1].ravel().tolist()
                 if publish_odom:
                     tracked_object.odom_publisher.publish(odom_msg)
 
@@ -368,6 +373,7 @@ class ViconStreamNode(Node):
                 pose_msg.pose.pose.orientation.z = q[2]
                 pose_msg.pose.pose.orientation.w = q[3]
                 pose_msg.header.stamp = odom_msg.header.stamp
+                pose_msg.pose.covariance = self.pose_covariance_
                 pose_msg.header.frame_id = self.parent_frame_id_
                 tracked_object.pose_publisher.publish(pose_msg)
 
@@ -473,6 +479,9 @@ class ViconStreamNode(Node):
             odom_msg.twist.twist.angular.x = ang_v_body[0]
             odom_msg.twist.twist.angular.y = ang_v_body[1]
             odom_msg.twist.twist.angular.z = ang_v_body[2]
+            pose_covariance, twist_covariance = estimate.odometry_covariances()
+            odom_msg.pose.covariance = pose_covariance.ravel().tolist()
+            odom_msg.twist.covariance = twist_covariance.ravel().tolist()
             tracked_object.filtered_odom_publisher.publish(odom_msg)
 
 

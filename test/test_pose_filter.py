@@ -287,6 +287,17 @@ def test_predicted_moves_the_estimate_and_leaves_the_filter_unchanged(model):
     assert np.array_equal(f.predicted(0.0).p, before.p)  # never before the current estimate
 
 
+def test_odometry_covariances_move_each_block_to_its_message_frame():
+    f = make_filter('cv')
+    f.reset(0.0, np.zeros(3), rot_z(math.pi / 2))
+    f.P_trans_ = np.diag([1.0, 2.0, 3.0, 10.0, 20.0, 30.0])  # p, v in the world
+    f.P_rot_ = np.diag([0.1, 0.2, 0.3, 1.0, 2.0, 3.0])  # d, w in the body
+    pose, twist = f.state().odometry_covariances()
+    # the body's x is the world's y at a heading of ninety degrees, and the other way round
+    assert np.allclose(pose, np.diag([1.0, 2.0, 3.0, 0.2, 0.1, 0.3]), rtol=0.0, atol=1e-15)
+    assert np.allclose(twist, np.diag([20.0, 10.0, 30.0, 1.0, 2.0, 3.0]), rtol=0.0, atol=1e-14)
+
+
 def test_a_bad_model_or_parameter_is_refused_by_name():
     with pytest.raises(ValueError, match="model must be one of \\['ca', 'cv'\\], got 'cj'"):
         PoseFilter('cj', (1.0, 1.0), **FILTER_ARGS)
