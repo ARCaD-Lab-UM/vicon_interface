@@ -104,7 +104,7 @@ def test_clean_frames_score_near_zero_and_host_stalls_reach_only_the_host_differ
 def test_the_replay_prints_every_quantity_and_estimator(tmp_path, monkeypatch, capsys):
     write_csv(tmp_path / 'raw.csv', 400)
     monkeypatch.setattr('sys.argv', ['replay_vicon_log.py', str(tmp_path / 'raw.csv'),
-                                     '--static', '0', '1', '--set', 'kf_gate_sigma=12.0'])
+                                     '--static', '0', '1', '--set', 'kf_rot_huber_k=2.0'])
     rv.main()
     printed = capsys.readouterr().out
     for word in [q for q, _ in rv.QUANTITIES] + list(rv.ESTIMATORS):

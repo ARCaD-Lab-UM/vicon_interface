@@ -41,8 +41,9 @@
     kf_ca_noise_psd: [10.0, 250.0]         # white jerk: m^2/s^5 position, rad^2/s^5 orientation
     kf_measurement_std: [2.0e-4, 1.0e-3]   # m, rad: child-frame pose noise; measure on a static log
     kf_initial_std: [1.0, 2.0, 5.0, 20.0]  # after a reset: m/s, rad/s, m/s^2, rad/s^2 ("ca" reads the last two)
-    kf_gate_sigma: 10.0                    # Mahalanobis distance above which a frame is rejected
+    kf_gate: [0.02, 0.2]                   # m, rad: innovations above which a frame is rejected (a marker swap)
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter
+    kf_rot_huber_k: 0.0                    # sigma above which a rotation residual weighs k / distance; 0 off
     twist_source: "filter"                 # odometry/<obj> twist: "filter" at the frame, or "finite_difference"
     raw_log_path: ""                       # CSV of every raw frame for replay_vicon_log.py, strftime allowed; "" off
     kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time

@@ -98,7 +98,8 @@ def make_filter(params, index, model):
         6, params['rolling_window_size'], offset_xyz=xyz, offset_R=R_off,
         motion_model=model, noise_psd=params[f'kf_{model}_noise_psd'],
         measurement_std=params['kf_measurement_std'], initial_std=params['kf_initial_std'],
-        gate_sigma=params['kf_gate_sigma'], max_rejections=params['kf_max_rejections'],
+        gate=params['kf_gate'], rot_huber_k=params['kf_rot_huber_k'],
+        max_rejections=params['kf_max_rejections'],
         max_delay=params['kf_max_delay'], clock_window=params['kf_clock_window'],
         offline_timeout=params['vicon_offline_timeout'],
         online_jitter_time=params['vicon_online_jitter_time'])

@@ -111,7 +111,8 @@ class ViconStreamNode(Node):
         std_p, std_theta = self.kf_measurement_std_  # m, rad
         self.pose_covariance_ = np.diag([std_p ** 2] * 3 + [std_theta ** 2] * 3).ravel().tolist()
         self.kf_initial_std_ = self._read_double_array("kf_initial_std", 4)
-        self.kf_gate_sigma_ = self._read_double("kf_gate_sigma")
+        self.kf_gate_ = self._read_double_array("kf_gate", 2)
+        self.kf_rot_huber_k_ = self._read_double("kf_rot_huber_k")
         self.kf_max_rejections_ = (
             self.declare_parameter("kf_max_rejections", rclpy.Parameter.Type.INTEGER)
             .get_parameter_value()
@@ -190,7 +191,8 @@ class ViconStreamNode(Node):
                     noise_psd=self.kf_noise_psd_,
                     measurement_std=self.kf_measurement_std_,
                     initial_std=self.kf_initial_std_,
-                    gate_sigma=self.kf_gate_sigma_,
+                    gate=self.kf_gate_,
+                    rot_huber_k=self.kf_rot_huber_k_,
                     max_rejections=self.kf_max_rejections_,
                     max_delay=self.kf_max_delay_,
                     clock_window=self.kf_clock_window_,

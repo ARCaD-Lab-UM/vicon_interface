@@ -17,7 +17,7 @@ PARAMS = {
     'noise_psd': (0.036, 0.9),
     'measurement_std': (2e-4, 1e-3),
     'initial_std': (1.0, 2.0, 5.0, 20.0),
-    'gate_sigma': 10.0,
+    'gate': (0.02, 0.2),
     'max_rejections': 5,
     'max_delay': 0.02,
     'clock_window': 2.0,

@@ -1,10 +1,12 @@
 """Tests for PoseFilter, the pose-only Kalman filter; numpy only, no ROS."""
+import copy
 import math
 
 import numpy as np
 import pytest
 
 from vicon_interface.state_estimators.pose_filter import (
+    _mahalanobis,
     kinematic_blocks,
     PoseFilter,
     so3_exp,
@@ -14,12 +16,12 @@ from vicon_interface.state_estimators.pose_filter import (
 
 DT = 0.004  # s, Vicon frame interval at 250 Hz
 MODELS = ('cv', 'ca')
-NOISE_PSD = {'cv': (0.036, 0.9), 'ca': (36.0, 900.0)}  # the param file's defaults
+NOISE_PSD = {'cv': (0.036, 0.9), 'ca': (36.0, 900.0)}  # "ca" at "cv"'s velocity noise
 STD = (2e-4, 1e-3)  # m, rad
 FILTER_ARGS = {
     'measurement_std': STD,
     'initial_std': (1.0, 2.0, 10.0, 20.0),
-    'gate_sigma': 10.0,
+    'gate': (0.02, 0.2),
     'max_rejections': 5,
     'reset_gap': 0.1,
 }
@@ -206,7 +208,7 @@ def test_a_single_outlier_is_rejected_as_if_the_frame_never_came(model, kind):
              for k in range(300)}
     jump = {
         'position': (np.array([0.05, 0.0, 0.0]), np.zeros(3)),  # m
-        'orientation': (np.zeros(3), np.array([0.0, 0.17, 0.0])),  # rad
+        'orientation': (np.zeros(3), np.array([0.0, 0.3, 0.0])),  # rad
     }
     seen, unseen = make_filter(model), make_filter(model)
     outcomes = run(seen, model, range(300), lambda k: jump[kind] if k == 200 else noise[k])
@@ -216,6 +218,47 @@ def test_a_single_outlier_is_rejected_as_if_the_frame_never_came(model, kind):
     assert np.allclose(a.p, b.p, atol=1e-8)
     assert np.allclose(a.v, b.v, atol=1e-6)
     assert np.allclose(a.w, b.w, atol=1e-5)
+
+
+@pytest.mark.parametrize('model', MODELS)
+@pytest.mark.parametrize('kind, size, outcome', [
+    ('position', 0.03, 'rejected'), ('position', 0.01, 'accepted'),  # m
+    ('orientation', 0.3, 'rejected'), ('orientation', 0.1, 'accepted'),  # rad
+])
+def test_the_gate_rejects_only_beyond_its_physical_thresholds(model, kind, size, outcome):
+    f = make_filter(model)
+    run(f, model, range(200))
+    p, R, _, _ = motion(model, 200 * DT)
+    if kind == 'position':
+        p = p + np.array([size, 0.0, 0.0])
+    else:
+        R = R @ so3_exp(np.array([0.0, size, 0.0]))
+    assert f.update(200 * DT, p, R) == outcome
+
+
+@pytest.mark.parametrize('model', MODELS)
+def test_the_huber_weight_leaves_small_residuals_alone_and_scales_a_large_one(model):
+    rng = np.random.default_rng(5)
+    small = {k: (np.zeros(3), 1e-5 * rng.standard_normal(3)) for k in range(200)}  # rad, << k
+    plain = make_filter(model)
+    huber = PoseFilter(model, NOISE_PSD[model], **{**FILTER_ARGS, 'rot_huber_k': 2.0})
+    run(plain, model, range(200), lambda k: small[k])
+    run(huber, model, range(200), lambda k: small[k])
+    for name in ('p', 'v', 'R', 'w', 'P_trans', 'P_rot'):
+        assert np.array_equal(getattr(plain.state(), name), getattr(huber.state(), name))
+    p, R, _, _ = motion(model, 200 * DT)
+    R = R @ so3_exp(np.array([0.0, 0.03, 0.0]))  # rad, a glitch inside the gate
+    scaled = copy.deepcopy(plain)  # the Huber update is a plain one with the variance scaled
+    _, _, R_pred, _, P_rot = scaled._propagate(DT)
+    distance = _mahalanobis(P_rot, so3_log(R_pred.T @ R), scaled.R_rot_)
+    assert distance > 2.0
+    scaled.R_rot_ = scaled.R_rot_ * (distance / 2.0)
+    for f in (plain, huber, scaled):
+        assert f.update(200 * DT, p, R) == 'accepted'
+    assert np.allclose(huber.state().R, scaled.state().R, rtol=0.0, atol=1e-14)
+    assert np.allclose(huber.state().w, scaled.state().w, rtol=1e-12, atol=1e-14)
+    pulled = [np.linalg.norm(so3_log(R_pred.T @ f.state().R)) for f in (plain, huber)]
+    assert pulled[1] < 0.5 * pulled[0]  # the glitch pulls the weighted filter less
 
 
 @pytest.mark.parametrize('model', MODELS)
@@ -305,3 +348,7 @@ def test_a_bad_model_or_parameter_is_refused_by_name():
         PoseFilter('cv', (1.0,), **FILTER_ARGS)
     with pytest.raises(ValueError, match='PoseFilter: noise_psd must be >= 0'):
         PoseFilter('cv', (-1.0, 1.0), **FILTER_ARGS)
+    with pytest.raises(ValueError, match='PoseFilter: gate takes 2 entries > 0'):
+        PoseFilter('cv', (1.0, 1.0), **{**FILTER_ARGS, 'gate': (0.02,)})
+    with pytest.raises(ValueError, match='rot_huber_k must be >= 0'):
+        PoseFilter('cv', (1.0, 1.0), **{**FILTER_ARGS, 'rot_huber_k': -1.0})

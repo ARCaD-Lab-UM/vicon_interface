@@ -119,8 +119,8 @@ class PoseEstimate:
 class PoseFilter:
     """Pose-only Kalman filter of one rigid body, with the 'cv' or 'ca' model described above."""
 
-    def __init__(self, model, noise_psd, measurement_std, initial_std, gate_sigma,
-                 max_rejections, reset_gap):
+    def __init__(self, model, noise_psd, measurement_std, initial_std, gate, max_rejections,
+                 reset_gap, rot_huber_k=0.0):
         """Build the filter.
 
         noise_psd: spectral densities of the white derivative, translation then rotation:
@@ -128,9 +128,12 @@ class PoseFilter:
         measurement_std: position (m) and orientation (rad).
         initial_std: velocity (m/s), angular velocity (rad/s), acceleration (m/s^2) and angular
             acceleration (rad/s^2) after a reset; 'ca' alone reads the last two.
-        gate_sigma: Mahalanobis distance above which a frame is rejected.
+        gate: position (m) and rotation (rad) innovations above which a frame is rejected, as a
+            marker swap or a flipped fit; motion, however sharp, stays well below them.
         max_rejections: rejected frames in a row that reset the filter.
         reset_gap: time (s) between frames above which the filter restarts from the measurement.
+        rot_huber_k: Mahalanobis distance above which a rotation residual's measurement variance
+            grows by distance / rot_huber_k (a Huber weight), so a glitch pulls less; 0 is off.
         """
         if model not in ORDERS:
             raise ValueError(f'PoseFilter: model must be one of {sorted(ORDERS)}, got {model!r}')
@@ -140,6 +143,8 @@ class PoseFilter:
         if min(noise_psd) < 0.0 or min(measurement_std) <= 0.0 or min(initial_std) <= 0.0:
             raise ValueError(
                 'PoseFilter: noise_psd must be >= 0, measurement_std and initial_std > 0')
+        if len(gate) != 2 or min(gate) <= 0.0 or rot_huber_k < 0.0:
+            raise ValueError('PoseFilter: gate takes 2 entries > 0, rot_huber_k must be >= 0')
         self.order_ = ORDERS[model]
         self.q_trans_, self.q_rot_ = (float(q) for q in noise_psd)
         std_p, std_theta = (float(s) for s in measurement_std)
@@ -150,7 +155,8 @@ class PoseFilter:
         rot = np.square([std_theta, std_w, std_alpha][:self.order_])
         self.P0_trans_ = np.diag(np.repeat(trans, 3))
         self.P0_rot_ = np.diag(np.repeat(rot, 3))
-        self.gate_sigma_ = float(gate_sigma)
+        self.gate_position_, self.gate_rotation_ = (float(g) for g in gate)  # m, rad
+        self.rot_huber_k_ = float(rot_huber_k)
         self.max_rejections_ = int(max_rejections)
         self.reset_gap_ = float(reset_gap)
         self.initialized_ = False
@@ -193,8 +199,8 @@ class PoseFilter:
         r_trans = np.asarray(p, dtype=float) - x[:3]  # m, world
         r_rot = so3_log(R_pred.T @ np.asarray(R, dtype=float))  # rad, body
         self.t_ = float(t)
-        if max(_mahalanobis(P_trans, r_trans, self.R_trans_),
-               _mahalanobis(P_rot, r_rot, self.R_rot_)) > self.gate_sigma_:
+        if (np.linalg.norm(r_trans) > self.gate_position_
+                or np.linalg.norm(r_rot) > self.gate_rotation_):
             self.rejections_ += 1
             if self.rejections_ >= self.max_rejections_:
                 self.reset(t, p, R)
@@ -205,7 +211,12 @@ class PoseFilter:
         self.rejections_ = 0
         dx, self.P_trans_ = _correct(P_trans, r_trans, self.R_trans_)
         self.x_ = x + dx
-        dx, self.P_rot_ = _correct(P_rot, r_rot, self.R_rot_)
+        R_rot = self.R_rot_
+        if self.rot_huber_k_ > 0.0:
+            distance = _mahalanobis(P_rot, r_rot, R_rot)
+            if distance > self.rot_huber_k_:
+                R_rot = R_rot * (distance / self.rot_huber_k_)  # weight k / distance
+        dx, self.P_rot_ = _correct(P_rot, r_rot, R_rot)
         self.R_ = R_pred @ so3_exp(dx[:3])
         self.rates_ = rates + dx[3:]
         return 'accepted'
