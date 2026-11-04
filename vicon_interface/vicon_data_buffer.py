@@ -28,6 +28,7 @@ class ViconDataBuffer:
 
         self.v_ = None
         self.a_ = None
+        self.R_child_ = None
 
     def add_pose(self, pose, latency):
         with self.lock_:
@@ -47,6 +48,7 @@ class ViconDataBuffer:
                 m = np.eye(4)
                 m[:3, :3] = R
                 roll, pitch, yaw = tf_transformations.euler_from_matrix(m, "sxyz")
+            self.R_child_ = R  # child orientation in the world frame, for ViconDataFilter
             if len(self.past_poses_) == self.rolling_window_size_:
                 self.past_poses_ = self.past_poses_[1:]
                 self.past_times_ = self.past_times_[1:]
@@ -81,94 +83,6 @@ class ViconDataBuffer:
                 return np.zeros(3), np.zeros(3), 0
             return self.v_.copy(), self.a_.copy(), self.past_times_[-1]
 
-    def get_interpolated_pose(self):
-        with self.lock_:
-            time_stamp = time.monotonic()
-            if len(self.past_poses_) < 2:
-                return np.zeros(3), np.zeros(3), time_stamp
-
-            time_diff = time_stamp - self.past_times_[-1]
-
-            position = self.past_poses_[-1, :3].copy()
-            roll, pitch, yaw = self.past_poses_[-1, 3:]
-            R = tf_transformations.euler_matrix(roll, pitch, yaw, "sxyz")[:3, :3]
-            v_world = np.dot(R, self.v_)
-            a_world = np.dot(R, self.a_)
-            position += time_diff * v_world
-            orientation = self.past_poses_[-1, 3:] + time_diff * a_world
-            return position, orientation, time_stamp
-
     def is_ready(self):
         with self.lock_:
             return len(self.past_poses_) == self.rolling_window_size_
-
-
-class ViconDataFilter:
-    def __init__(self, cutoff_freq, dt) -> None:
-        self.last_pose_ = None
-        self.last_time_ = None
-        self.cutoff_freq_ = cutoff_freq
-        self.epow_ = 1 - np.exp(-2 * np.pi * cutoff_freq * dt)
-        self.lock_ = Lock()
-
-        self.v_ = None
-        self.a_ = None
-
-    def add_pose(self, pose, latency):
-        with self.lock_:
-            time_stamp = time.monotonic()
-            x, y, z, roll, pitch, yaw = pose
-            x /= 1000.0
-            y /= 1000.0
-            z /= 1000.0
-            if self.last_pose_ is None:
-                self.last_pose_ = np.array([x, y, z, roll, pitch, yaw])
-                self.last_time_ = time_stamp
-                return
-            this_pose = np.array([x, y, z, roll, pitch, yaw])
-            delta = this_pose - self.last_pose_
-            delta[3:] = np.arctan2(np.sin(delta[3:]), np.cos(delta[3:]))  # wrap to [-pi, pi], rad
-            new_filtered_pose = self.last_pose_ + self.epow_ * delta
-
-            self.v_ = (new_filtered_pose[:3] - self.last_pose_[:3]) / (
-                time_stamp - self.last_time_
-            )
-            d_angle = new_filtered_pose[3:] - self.last_pose_[3:]
-            d_angle = np.arctan2(np.sin(d_angle), np.cos(d_angle))  # wrap to [-pi, pi], rad
-            self.a_ = d_angle / (time_stamp - self.last_time_)
-            R = tf_transformations.euler_matrix(
-                new_filtered_pose[3], new_filtered_pose[4], new_filtered_pose[5], "sxyz"
-            )[:3, :3]
-            self.v_ = np.dot(R.T, self.v_)
-            self.a_ = np.dot(R.T, self.a_)
-            self.last_pose_ = new_filtered_pose
-            self.last_time_ = time_stamp
-
-    def get_latest_pose(self):
-        with self.lock_:
-            if self.last_pose_ is None:
-                return np.zeros(6), 0
-            return self.last_pose_.copy(), self.last_time_
-
-    def get_latest_velocity(self):
-        with self.lock_:
-            if self.v_ is None:
-                return np.zeros(3), np.zeros(3), 0
-            return self.v_.copy(), self.a_.copy(), self.last_time_
-
-    def get_interpolated_pose(self):
-        with self.lock_:
-            time_stamp = time.monotonic()
-            if self.v_ is None:
-                return np.zeros(3), np.zeros(3), time_stamp
-
-            time_diff = time_stamp - self.last_time_
-
-            position = self.last_pose_[:3].copy()
-            roll, pitch, yaw = self.last_pose_[3:]
-            R = tf_transformations.euler_matrix(roll, pitch, yaw, "sxyz")[:3, :3]
-            v_world = np.dot(R, self.v_)
-            a_world = np.dot(R, self.a_)
-            position += time_diff * v_world
-            orientation = self.last_pose_[3:] + time_diff * a_world
-            return position, orientation, time_stamp

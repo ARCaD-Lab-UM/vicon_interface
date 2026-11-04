@@ -16,7 +16,15 @@ python3 -c "import rclpy, tf_transformations, pyvicon_datastream"
 
 # Configure
 
-Please update `vicon_tracker_ip` and `vicon_object_names` (list) to match the Vicon PC's IP and tracked objects. The node publishes each object under `vicon_pose/<name>`, `odometry/<name>`, `odometry/filtered/<name>`, and `vicon_latency/<name>`. Optionally provide `child_frame_ids` (list) to align per-object child frame IDs; otherwise each object defaults to `<name>/base_link`.
+Please update `vicon_tracker_ip` and `vicon_object_names` (list) to match the Vicon PC's IP and tracked objects. Optionally provide `child_frame_ids` (list) to align per-object child frame IDs; otherwise each object defaults to `<name>/base_link`.
+
+The node publishes each object under:
+
+- `vicon_pose/<name>`: the pose of the child frame in `parent_frame_id`.
+- `odometry/<name>`: the same pose plus a twist in the child frame from a rolling-window finite difference. `header.stamp` is the capture time (back-dated by the Vicon latency), so a consumer can compensate the delay itself.
+- `odometry/filtered/<name>`: a Kalman-filtered world position and child-frame velocity, published by a timer at `filtered_odom_dt`, already moved to the publish time (the Vicon latency is compensated) and stamped `now`. It pauses while the object has had no frame for `vicon_offline_timeout`. Tuning lives in the `kf_*` and `vicon_*` entries of `param/vicon_interface.param.yaml`, each commented with its unit.
+- `vicon_latency/<name>`: the Vicon pipeline latency in seconds.
+- `/tf`: `parent_frame_id -> <child frame>` per object when `publish_tf` is true.
 
 # Build
 
@@ -36,3 +44,14 @@ colcon build --symlink-install --packages-select vicon_interface
 source install/setup.bash
 ros2 launch vicon_interface vicon_interface.launch.py
 ```
+
+# Test
+
+The unit tests need no Vicon and no running node, only the sourced ROS environment for `tf_transformations`:
+
+```bash
+source /opt/ros/$ROS_DISTRO/setup.bash
+/usr/bin/python3 -m pytest test/test_state_estimators.py test/test_vicon_data_filter.py
+```
+
+`colcon test --packages-select vicon_interface` runs the same tests plus the ament linters, which still report the package's older style findings.

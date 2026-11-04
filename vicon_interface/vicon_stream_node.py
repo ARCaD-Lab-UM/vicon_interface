@@ -20,14 +20,14 @@ import tf_transformations
 
 import numpy as np
 
-from vicon_interface.vicon_data_buffer import ViconDataBuffer, ViconDataFilter
+from vicon_interface.vicon_data_filter import ViconDataFilter
 
 
 @dataclass
 class TrackedObject:
     name: str
     child_frame_id: str
-    buffer: ViconDataBuffer
+    buffer: ViconDataFilter
     pose_publisher: Any
     odom_publisher: Any
     filtered_odom_publisher: Any
@@ -91,6 +91,13 @@ class ViconStreamNode(Node):
         self.publish_tf_ = (
             self.declare_parameter("publish_tf", True).get_parameter_value().bool_value
         )
+        # Kalman filter and watchdog behind odometry/filtered/<obj>; units in the param file.
+        self.kf_process_noise_ = self._read_double_array("kf_process_noise", 6)
+        self.kf_measurement_noise_ = self._read_double_array("kf_measurement_noise", 6)
+        self.kf_initial_covariance_ = self._read_double_array("kf_initial_covariance", 6)
+        self.kf_max_delay_ = self._read_double("kf_max_delay")
+        self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
+        self.vicon_online_jitter_time_ = self._read_double("vicon_online_jitter_time")
 
         # (T_marker->child): the child origin in marker coordinates, and the child orientation as sxyz Euler angles in degrees.
         n_obj = len(self.viacon_object_names_)
@@ -133,11 +140,19 @@ class ViconStreamNode(Node):
             tracked_object = TrackedObject(
                 name=object_name,
                 child_frame_id=child_frame,
-                buffer=ViconDataBuffer(
+                buffer=ViconDataFilter(
                     6,
                     self.rolling_window_size_,
                     offset_xyz=self.child_frame_offsets_xyz_[idx],
                     offset_R=self.child_frame_offsets_R_[idx],
+                    process_noise=self.kf_process_noise_,
+                    measurement_noise=self.kf_measurement_noise_,
+                    initial_covariance=self.kf_initial_covariance_,
+                    max_delay=self.kf_max_delay_,
+                    predict_dt=self.filtered_odom_dt_,
+                    offline_timeout=self.vicon_offline_timeout_,
+                    online_jitter_time=self.vicon_online_jitter_time_,
+                    owner_id=object_name,
                 ),
                 pose_publisher=self.create_publisher(PoseWithCovarianceStamped, pose_topic, 1),
                 odom_publisher=self.create_publisher(Odometry, odom_topic, 1),
@@ -162,6 +177,25 @@ class ViconStreamNode(Node):
             self.filtered_odom_dt_,
             self.filtered_odom_timer_callback,
             self.cb_group_filtered_odom_,
+        )
+
+    def _read_double_array(self, name, n):
+        """Read a double array parameter that must have exactly n entries; fatal otherwise."""
+        values = list(
+            self.declare_parameter(name, rclpy.Parameter.Type.DOUBLE_ARRAY)
+            .get_parameter_value()
+            .double_array_value
+        )
+        if len(values) != n:
+            self.get_logger().fatal(f"`{name}` must have {n} entries; got {len(values)}.")
+            raise ValueError(f"Bad parameter `{name}`")
+        return values
+
+    def _read_double(self, name):
+        return (
+            self.declare_parameter(name, rclpy.Parameter.Type.DOUBLE)
+            .get_parameter_value()
+            .double_value
         )
 
     def _read_per_object_vec3(self, name, n_obj):
@@ -322,14 +356,24 @@ class ViconStreamNode(Node):
                 time.sleep(self.poll_vicon_dt_ - (end - begin))
 
     def filtered_odom_timer_callback(self):
-        for tracked_object in self.tracked_objects_.values():
-            if not tracked_object.buffer.is_ready():
+        for object_name, tracked_object in self.tracked_objects_.items():
+            if not tracked_object.buffer.update():
+                if tracked_object.buffer.is_offline():
+                    self.get_logger().warning(
+                        f"No Vicon frame for `{object_name}` within vicon_offline_timeout, "
+                        "odometry/filtered paused.",
+                        throttle_duration_sec=1.0,
+                    )
                 continue
-            position, orientation, _ = tracked_object.buffer.get_interpolated_pose()
-            v_body, ang_v_body, _ = tracked_object.buffer.get_latest_velocity()
+            p_world, v_world, rpy, ang_v_body, stamp = tracked_object.buffer.get_filtered_state()
+            age = time.monotonic() - stamp  # s, since the frame was captured
+            R = tf_transformations.euler_matrix(*rpy, "sxyz")[:3, :3]
+            rpy_now = rpy + age * (R @ ang_v_body)  # rad, moved to now by the world Euler rate
+            R_now = tf_transformations.euler_matrix(*rpy_now, "sxyz")[:3, :3]
+            v_body = R_now.T @ v_world  # m/s, child frame
 
-            x, y, z = position
-            roll, pitch, yaw = orientation
+            x, y, z = p_world
+            roll, pitch, yaw = rpy_now
             states = np.array(
                 [
                     x,
