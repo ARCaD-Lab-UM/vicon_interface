@@ -111,13 +111,13 @@ degrades the Euler angles and the Euler-rate `twist.angular` with them.
 ## Things that bite consumers
 
 - `odometry/<obj>` is the **child frame** (base_link), not the marker; old bags and scripts need updating.
-- `odometry/<obj>` back-dates `header.stamp` by the Vicon pipeline latency, so `now - stamp` is a real
-  end-to-end delay and latency compensation works. `odometry/filtered/<obj>` is compensated to its
+- `odometry/<obj>` stamps the capture time (Vicon clock plus the minimum offset), so `now - stamp` is a
+  real end-to-end delay and latency compensation works. `odometry/filtered/<obj>` is compensated to its
   publish time and stamped `now()` by design, and pauses while the object is offline; a consumer that
   compensates latency itself uses the unfiltered one, as `humanoid-control` does
   (`modules/bridges/vicon_client`, `/odometry/arcadian`).
-- Velocity is a finite difference across the whole rolling window (`rolling_window_size`, 5 in the
-  param file at 250 Hz), so it carries about 8 ms of group delay relative to its own timestamp.
+- `odometry/<obj>`'s twist is the pose filter's at its stamp; `twist_source: finite_difference` gives the
+  rolling-window difference back, with about 8 ms of group delay (`rolling_window_size` 5 at 250 Hz).
 
 ## Where to look next
 

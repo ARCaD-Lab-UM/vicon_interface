@@ -35,11 +35,13 @@ class ViconDataFilter(ViconDataBuffer):
         self.frames_since_online_ = 0
         self.kf_resets_ = 0
         self.kf_rejections_ = 0  # frames the filter's gate rejected
+        self.fused_ = False  # the latest add_pose stepped the filter
 
     def add_pose(self, pose, latency, frame_number=None, frame_rate=None):
         """Buffer a pose, step the filter by the frame-number step over frame_rate, then fuse."""
         super().add_pose(pose, latency)
         with self.lock_:
+            self.fused_ = False
             now = time.monotonic()
             now_ms = 1000.0 * now
             self.daemon_.update(now_ms)  # catches a gap even if the timer did not run
@@ -80,6 +82,7 @@ class ViconDataFilter(ViconDataBuffer):
             self.frame_number_ = frame_number
             # capture time on the host clock (frame stamp) minus the Vicon time of the same frame
             self._add_clock_offset(now, self.past_times_[-1] - self.frame_time_)
+            self.fused_ = True
 
     def _add_clock_offset(self, now, offset):
         """Keep the minimum host-minus-Vicon offset over clock_window: delays only add to it."""
@@ -120,6 +123,22 @@ class ViconDataFilter(ViconDataBuffer):
             stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
             ahead = min(max(now - stamp, 0.0), self.max_delay_)  # s
             return self.kf_.predicted(self.frame_time_ + ahead), stamp
+
+    def get_frame_state(self):
+        """Return (estimate, stamp) for the latest frame, as odometry/<obj> reads it.
+
+        stamp is the frame's capture time on the host monotonic clock, from the Vicon clock and
+        the minimum offset; None when the frame was not fused. estimate is the filter's
+        PoseEstimate at that frame; None as well while the filter has fused fewer than
+        rolling_window_size frames since it started.
+        """
+        with self.lock_:
+            if not self.fused_:
+                return None, None
+            stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
+            if self.frames_since_online_ < self.rolling_window_size_:
+                return None, stamp
+            return self.kf_.state(), stamp
 
     def has_frame_clock(self):
         with self.lock_:

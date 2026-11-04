@@ -113,6 +113,14 @@ class ViconStreamNode(Node):
         )
         self.kf_max_delay_ = self._read_double("kf_max_delay")
         self.kf_clock_window_ = self._read_double("kf_clock_window")
+        self.twist_source_ = (
+            self.declare_parameter("twist_source", "filter").get_parameter_value().string_value
+        )
+        if self.twist_source_ not in ("filter", "finite_difference"):
+            self.get_logger().fatal(
+                "`twist_source` must be \"filter\" or \"finite_difference\"; "
+                f"got \"{self.twist_source_}\".")
+            raise ValueError("Bad parameter `twist_source`")
         self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
         self.vicon_online_jitter_time_ = self._read_double("vicon_online_jitter_time")
 
@@ -282,10 +290,20 @@ class ViconStreamNode(Node):
                     )
                     # continue
 
-                v_body, ang_v_body, timestamp = tracked_object.buffer.get_latest_velocity()
+                estimate, stamp = tracked_object.buffer.get_frame_state()
+                if stamp is not None:  # capture time from the Vicon clock, free of host delays
+                    age = max(time.monotonic() - stamp, 0.0)  # s
+                    frame_stamp = (self.get_clock().now() - Duration(seconds=age)).to_msg()
+                if self.twist_source_ == "filter":
+                    publish_odom = estimate is not None  # not while the filter warms up
+                    v_body = estimate.R.T @ estimate.v if publish_odom else np.zeros(3)  # m/s
+                    ang_v_body = estimate.w if publish_odom else np.zeros(3)  # rad/s, child
+                else:
+                    v_body, ang_v_body, timestamp = tracked_object.buffer.get_latest_velocity()
+                    publish_odom = timestamp != 0
+                pose, timestamp = tracked_object.buffer.get_latest_pose()
                 if timestamp == 0:
                     continue
-                pose, _ = tracked_object.buffer.get_latest_pose()
                 x, y, z, roll, pitch, yaw = pose
 
                 states = np.array(
@@ -338,7 +356,8 @@ class ViconStreamNode(Node):
                 odom_msg.twist.twist.angular.x = ang_v_body[0]
                 odom_msg.twist.twist.angular.y = ang_v_body[1]
                 odom_msg.twist.twist.angular.z = ang_v_body[2]
-                tracked_object.odom_publisher.publish(odom_msg)
+                if publish_odom:
+                    tracked_object.odom_publisher.publish(odom_msg)
 
                 pose_msg = PoseWithCovarianceStamped()
                 pose_msg.pose.pose.position.x = x

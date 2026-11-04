@@ -250,6 +250,27 @@ def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock, model
     assert f.kf_rejections_ == 1 and f.kf_resets_ == 1
 
 
+def test_the_frame_state_is_the_filter_at_the_capture_time(clock):
+    """odometry/<obj> reads it: no host delay reaches the stamp, nothing during the warm-up."""
+    rng = np.random.default_rng(4)
+    f = make_filter()
+    v = np.array([0.3, -0.1, 0.05])
+    latency = 0.008  # s, as the SDK reports it
+    for k in range(200):
+        delay = 0.0 if k % 10 == 0 else rng.uniform(0.0, 0.9 * DT)  # s, the host's own waiting
+        feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), latency=latency, delay=delay)
+        estimate, stamp = f.get_frame_state()
+        if k >= 10:  # one frame on time in each ten sets the minimum offset
+            assert stamp == pytest.approx(100.0 + k * DT, abs=1e-9)
+        if k < WINDOW - 1:
+            assert estimate is None and stamp is not None
+        elif k >= 100:
+            assert np.allclose(estimate.v, v, atol=1e-4)
+            assert np.allclose(estimate.p, v * k * DT, atol=1e-5)  # at the frame, not moved
+    feed(f, clock, 200, np.full(3, np.nan), (0.0, 0.0, 0.0))
+    assert f.get_frame_state() == (None, None)  # a frame not fused has no stamp either
+
+
 def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
     f = make_filter()
     v = np.array([0.3, -0.1, 0.05])
