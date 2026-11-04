@@ -62,6 +62,7 @@ Set `raw_log_path` in `param/vicon_interface.param.yaml` (for example `/tmp/vico
 
 ```bash
 /usr/bin/python3 replay_vicon_log.py /tmp/vicon_raw_<time>.csv --object g1 --static 0 20
+/usr/bin/python3 replay_vicon_log.py data/2026-11-04_g1_static_dynamic/dynamic_markers.npz --object g1
 ```
 
-It feeds the log to the node's estimators and prints how late the host picked frames up, then, for the old host-clocked finite difference, the frame-clocked one and the pose filter with each motion model, the deviation from a zero-phase reference, the lag and the frame-to-frame jumps. `--static T0 T1` (seconds from the first frame) prints the pose noise at rest, the values for `kf_measurement_std`. Raise `kf_cv_noise_psd` (or `kf_ca_noise_psd`) for less lag, lower it for less noise.
+It also reads a recording's `*_markers.npz` (`data/`, `--rate` for its frame rate). It feeds the frames to the node's estimators and prints how late the host picked them up. Then, for position, rotation, velocity and angular velocity, it scores the raw Vicon pose, the old host-clocked finite difference, the frame-clocked one and the pose filter with each motion model against zero-phase references (quadratic fits over ±12 frames): the error's RMS, 99.9th percentile and maximum, its frame-to-frame change (a jump, with the motion itself taken out) and, for the twists, the lag. `--skip T0 T1` leaves a stretch out, `--set key=value` overrides a parameter for a sweep, and `--static T0 T1` (seconds from the first frame) prints the rigid body's pose noise at rest, the values for `kf_measurement_std`.
