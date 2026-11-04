@@ -101,8 +101,8 @@ class ViconDataFilter(ViconDataBuffer):
                 self.frames_since_online_ = 0
                 self.kf_needs_reset_ = True
                 return False
-            if not self.kf_initialized_ or self.kf_needs_reset_:
-                return False
+            if not self.kf_initialized_ or self.kf_needs_reset_ or not self.frame_clock_ok_:
+                return False  # without a frame rate, frames still come but the filter stands still
             if self.frames_since_online_ < self.rolling_window_size_:
                 return False  # the filter has fused only a few post-gap frames
             return not self.daemon_.is_error()

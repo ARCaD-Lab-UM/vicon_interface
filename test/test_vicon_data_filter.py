@@ -380,6 +380,12 @@ def test_without_a_frame_rate_the_filter_waits(clock):
     assert f.is_online() and f.update() is False
     feed(f, clock, 20, np.zeros(3), (0.0, 0.0, 0.0))
     assert f.has_frame_clock() and f.kf_resets_ == 1
+    for k in range(21, 40):
+        feed(f, clock, k, np.zeros(3), (0.0, 0.0, 0.0))
+    assert f.update() is True
+    feed(f, clock, 40, np.zeros(3), (0.0, 0.0, 0.0), frame_rate=0.0)  # the rate goes missing
+    assert not f.has_frame_clock() and f.update() is False  # no held prediction on the topic
+    assert f.get_frame_state() == (None, None)
 
 
 def test_raw_buffer_outputs_are_unchanged_by_the_filter(clock):
