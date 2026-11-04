@@ -64,8 +64,8 @@ velocity and height.
   `ViconDataFilter`, under its lock. Its getters return copies: the node writes clipped values into them.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
-  whole rolling window, rotated into the child frame. The orientation rate is an Euler-angle rate, not
-  ω. Wrap the angle difference, not the rate: wrapping the rate spiked `twist.angular` at ±180° yaw.
+  whole rolling window, timed by the Vicon clock, rotated into the child frame. The orientation rate is
+  an Euler-angle rate, not ω. Wrap the angle difference, not the rate (that spiked at ±180° yaw).
 - `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the child's world position and SO(3)
   orientation with their rates (`cv`) or rates and accelerations (`ca`), only the pose measured. Per
   frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),

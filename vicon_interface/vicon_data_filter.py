@@ -39,7 +39,8 @@ class ViconDataFilter(ViconDataBuffer):
 
     def add_pose(self, pose, latency, frame_number=None, frame_rate=None):
         """Buffer a pose, step the filter by the frame-number step over frame_rate, then fuse."""
-        super().add_pose(pose, latency)
+        clock_ok = frame_number is not None and frame_rate is not None and frame_rate > 0.0
+        super().add_pose(pose, latency, frame_number / frame_rate if clock_ok else None)
         with self.lock_:
             self.fused_ = False
             now = time.monotonic()
@@ -50,9 +51,7 @@ class ViconDataFilter(ViconDataBuffer):
                 self.kf_needs_reset_ = True
             self.daemon_.reload(now_ms)
             self.frames_since_online_ += 1
-            self.frame_clock_ok_ = (
-                frame_number is not None and frame_rate is not None and frame_rate > 0.0
-            )
+            self.frame_clock_ok_ = clock_ok
             if not self.frame_clock_ok_:
                 return  # no Vicon time for this frame: the filter is not stepped
             p = self.past_poses_[-1, :3]  # m, world position of the child frame

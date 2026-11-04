@@ -172,6 +172,30 @@ def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock, model):
     assert max(err_kf) < 1e-4
 
 
+def test_the_finite_difference_is_timed_by_the_frame_clock(clock):
+    """The fallback twist: host delays and dropped frames reach it only through the host clock."""
+    rng = np.random.default_rng(5)
+    f = make_filter()
+    host = ViconDataBuffer(6, WINDOW)  # given no frame times, as before
+    v = np.array([0.5, 0.2, 0.0])
+    err_frame, err_host = [], []
+    k = 0
+    for i in range(300):
+        k += 2 if rng.random() < 0.05 else 1  # 5 % of the frames never reach the node
+        delay = rng.uniform(0.0, 0.9 * DT)  # s, waiting the SDK latency does not include
+        feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), delay=delay)
+        host.add_pose((1000.0 * v[0] * k * DT, 1000.0 * v[1] * k * DT, 0.0, 0.0, 0.0, 0.0), 0.0)
+        if i >= WINDOW:
+            err_frame.append(np.max(np.abs(f.get_latest_velocity()[0] - v)))
+            err_host.append(np.max(np.abs(host.get_latest_velocity()[0] - v)))
+    assert max(err_frame) < 1e-9
+    assert max(err_host) > 0.05  # what the host clock did to the same frames
+    for j in range(WINDOW):  # Vicon restarts its frame count: the window starts over
+        feed(f, clock, k + 1 + j, v * (k + 1 + j) * DT, (0.0, 0.0, 0.0), frame_number=3 + j)
+        assert f.is_ready() == (j == WINDOW - 1)
+    assert np.allclose(f.get_latest_velocity()[0], v, atol=1e-9)
+
+
 @pytest.mark.parametrize('model, rms_max, fd_ratio', [({}, 0.05, 1.5), (CA, 0.02, 1.0)],
                          ids=['cv', 'ca'])
 def test_sinusoid_velocity_error_is_small(clock, model, rms_max, fd_ratio):
@@ -361,7 +385,7 @@ def test_raw_buffer_outputs_are_unchanged_by_the_filter(clock):
         clock.t = 100.0 + t
         r, p, y = node_angles(*rpy)
         sample = (1000.0 * pos[0], 1000.0 * pos[1], 1000.0 * pos[2], r, p, y)
-        raw.add_pose(sample, 0.005)
+        raw.add_pose(sample, 0.005, k / RATE)
         f.add_pose(sample, 0.005, k, RATE)
         for a, b in zip(raw.get_latest_pose(), f.get_latest_pose()):
             assert np.array_equal(a, b)

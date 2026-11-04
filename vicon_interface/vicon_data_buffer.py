@@ -15,6 +15,7 @@ class ViconDataBuffer:
         """
         self.past_poses_ = np.zeros((0, state_dim))
         self.past_times_ = np.zeros((0, 1))
+        self.past_frame_times_ = np.zeros(0)  # s, Vicon clock; NaN where a frame had none
         self.rolling_window_size_ = rolling_window_size
         self.lock_ = Lock()
 
@@ -30,9 +31,20 @@ class ViconDataBuffer:
         self.a_ = None
         self.R_child_ = None
 
-    def add_pose(self, pose, latency):
+    def add_pose(self, pose, latency, frame_time=None):
+        """Buffer a pose captured latency (s) ago, at frame_time (s) on the Vicon clock if given.
+
+        The finite difference is timed by the Vicon clock when every pose in the window has a
+        frame time, by the host capture times otherwise. A frame time that does not increase
+        (a restarted Vicon) starts the window over.
+        """
         with self.lock_:
             time_stamp = time.monotonic() - latency
+            frame_time = np.nan if frame_time is None else float(frame_time)
+            if len(self.past_frame_times_) and frame_time <= self.past_frame_times_[-1]:
+                self.past_poses_ = self.past_poses_[:0]  # NaN on either side compares False
+                self.past_times_ = self.past_times_[:0]
+                self.past_frame_times_ = self.past_frame_times_[:0]
             x, y, z, roll, pitch, yaw = pose
             x /= 1000.0
             y /= 1000.0
@@ -52,18 +64,22 @@ class ViconDataBuffer:
             if len(self.past_poses_) == self.rolling_window_size_:
                 self.past_poses_ = self.past_poses_[1:]
                 self.past_times_ = self.past_times_[1:]
+                self.past_frame_times_ = self.past_frame_times_[1:]
             self.past_poses_ = np.vstack(
                 (self.past_poses_, np.array([x, y, z, roll, pitch, yaw]))
             )
             self.past_times_ = np.append(self.past_times_, time_stamp)
+            self.past_frame_times_ = np.append(self.past_frame_times_, frame_time)
 
             if len(self.past_poses_) == self.rolling_window_size_:
-                self.v_ = (self.past_poses_[-1, :3] - self.past_poses_[0, :3]) / (
-                    self.past_times_[-1] - self.past_times_[0]
-                )
+                times = self.past_frame_times_
+                if np.any(np.isnan(times)):
+                    times = self.past_times_  # a frame without Vicon time: the host clock
+                dt = times[-1] - times[0]  # s, across the window
+                self.v_ = (self.past_poses_[-1, :3] - self.past_poses_[0, :3]) / dt
                 d_angle = self.past_poses_[-1, 3:] - self.past_poses_[0, 3:]
                 d_angle = np.arctan2(np.sin(d_angle), np.cos(d_angle))  # wrap to [-pi, pi], rad
-                self.a_ = d_angle / (self.past_times_[-1] - self.past_times_[0])
+                self.a_ = d_angle / dt
             else:
                 self.v_ = np.zeros(3)
                 self.a_ = np.zeros(3)
