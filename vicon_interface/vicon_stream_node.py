@@ -288,7 +288,7 @@ class ViconStreamNode(Node):
                         f"Vicon dropped a frame for `{object_name}`: {e}",
                         throttle_duration_sec=1.0,
                     )
-                    # continue
+                    continue  # publishing now would repeat the previous frame under a new stamp
 
                 estimate, stamp = tracked_object.buffer.get_frame_state()
                 if stamp is not None:  # capture time from the Vicon clock, free of host delays
