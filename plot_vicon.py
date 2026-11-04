@@ -14,7 +14,7 @@ Right, one column per object, three stacked panels:
 
   position          published child frame, x / y / z as red / green / blue
   linear velocity   body frame, x / y / z as red / green / blue
-  angular velocity  body-frame Euler rates, roll / pitch / yaw as red / green / blue
+  angular velocity  body frame, x / y / z as red / green / blue
 
 Everything plotted is exactly what the node publishes on `odometry/<obj>`; this script
 does no pose maths of its own beyond turning the published quaternion into the arrows.
@@ -38,10 +38,9 @@ from rclpy.node import Node
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-# x / y / z  and  roll / pitch / yaw share this colour order.
+# x / y / z share this colour order.
 AXIS_COLORS = ("tab:red", "tab:green", "tab:blue")
 XYZ_LABELS = ("x", "y", "z")
-RPY_LABELS = ("roll", "pitch", "yaw")
 
 PARAM_NAMES = (
     "vicon_object_names",
@@ -154,13 +153,13 @@ def build_figure(traces, window):
         for lbl, color in zip(XYZ_LABELS, AXIS_COLORS):
             per_object["pos"].append(ax_pos.plot([], [], color=color, lw=1.5, label=lbl)[0])
             per_object["lin"].append(ax_lin.plot([], [], color=color, lw=1.4, label=lbl)[0])
-        for lbl, color in zip(RPY_LABELS, AXIS_COLORS):
+        for lbl, color in zip(XYZ_LABELS, AXIS_COLORS):
             per_object["ang"].append(ax_ang.plot([], [], color=color, lw=1.4, label=lbl)[0])
         lines[name] = per_object
 
         ax_pos.set_ylabel("position [m]")
         ax_lin.set_ylabel("linear vel [m/s]\n(body frame)")
-        ax_ang.set_ylabel("angular vel [rad/s]\n(Euler rates, body)")
+        ax_ang.set_ylabel("angular vel [rad/s]\n(body frame)")
         ax_ang.set_xlabel(f"time [s]  (rolling {window:.0f} s)")
         for ax in (ax_pos, ax_lin, ax_ang):
             ax.grid(alpha=0.3)

@@ -64,8 +64,8 @@ velocity and height.
   `ViconDataFilter`, under its lock. Its getters return copies: the node writes clipped values into them.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
-  whole rolling window, timed by the Vicon clock, rotated into the child frame. The orientation rate is
-  an Euler-angle rate, not ω. Wrap the angle difference, not the rate (that spiked at ±180° yaw).
+  whole rolling window, timed by the Vicon clock, rotated into the child frame. The angular velocity is
+  the body rate log(R_first^T R_last) / dt across the window, so yaw at ±180° cannot spike it.
 - `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the child's world position and SO(3)
   orientation with their rates (`cv`) or rates and accelerations (`ca`), only the pose measured. Per
   frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
@@ -79,7 +79,7 @@ velocity and height.
   `vicon_latency/<obj>` (Float32, seconds, the SDK's `get_latency_total()`), and with `publish_tf` one TF
   `parent_frame_id -> child_frame_id` per object, all objects in one message per frame. The four
   publishers use QoS depth 1; TF uses the `TransformBroadcaster` default.
-- States are clipped to `min_states` / `max_states` (12 entries: xyz, rpy, body v, body Euler rate)
+- States are clipped to `min_states` / `max_states` (12 entries: xyz, rpy, body v, body ω)
   before publishing, on both odometry topics and the pose.
 - A tracker that does not answer at start is fatal: the constructor raises and the process exits.
 
@@ -106,7 +106,7 @@ The YAML's objects today (`g1`, `box`) sit below their rigid bodies (negative z)
 180° in yaw, hence the yaw entries; if a rigid body is redefined, change these entries, nothing
 downstream. Verified to machine precision against analytic truth for zero, yaw-90° and 10/-20/45°
 offsets; with both offsets zero the output is bit-identical to the pre-offset code. Pitch near ±90°
-degrades the Euler angles and the Euler-rate `twist.angular` with them.
+degrades the published Euler angles, not the twist.
 
 ## Things that bite consumers
 

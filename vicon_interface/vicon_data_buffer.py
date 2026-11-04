@@ -3,6 +3,8 @@ from threading import Lock
 import numpy as np
 import tf_transformations
 
+from vicon_interface.state_estimators.pose_filter import so3_log
+
 
 class ViconDataBuffer:
     def __init__(self, state_dim, rolling_window_size, offset_xyz=None, offset_R=None) -> None:
@@ -77,15 +79,13 @@ class ViconDataBuffer:
                     times = self.past_times_  # a frame without Vicon time: the host clock
                 dt = times[-1] - times[0]  # s, across the window
                 self.v_ = (self.past_poses_[-1, :3] - self.past_poses_[0, :3]) / dt
-                d_angle = self.past_poses_[-1, 3:] - self.past_poses_[0, 3:]
-                d_angle = np.arctan2(np.sin(d_angle), np.cos(d_angle))  # wrap to [-pi, pi], rad
-                self.a_ = d_angle / dt
+                R_first = tf_transformations.euler_matrix(*self.past_poses_[0, 3:], "sxyz")
+                self.a_ = so3_log(R_first[:3, :3].T @ R) / dt  # rad/s, body, across the window
             else:
                 self.v_ = np.zeros(3)
                 self.a_ = np.zeros(3)
 
             self.v_ = np.dot(R.T, self.v_)
-            self.a_ = np.dot(R.T, self.a_)
 
     def get_latest_pose(self):
         with self.lock_:

@@ -262,6 +262,20 @@ def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(
     assert np.allclose(est.w, w_body, atol=1e-5)  # the Euler-rate twist reads [0, -1, 0] here
 
 
+def test_the_finite_difference_reports_the_body_angular_velocity(clock):
+    f = make_filter()
+    w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis
+    heading = so3_exp(np.array([0.0, 0.0, np.pi / 2]))
+    for k in range(20):
+        feed(f, clock, k, np.zeros(3), sdk_angles(heading @ so3_exp(w_body * k * DT)))
+    assert np.allclose(f.get_latest_velocity()[1], w_body, atol=1e-9)  # was [0, -1, 0]
+    rate = 2.0  # rad/s; yaw passes +pi at frame 50
+    for k in range(20, 100):
+        feed(f, clock, k, np.zeros(3), (0.0, 0.0, np.pi - 0.4 + rate * (k - 20) * DT))
+        if k >= 20 + WINDOW:
+            assert np.allclose(f.get_latest_velocity()[1], [0.0, 0.0, rate], atol=1e-9)
+
+
 @MODELS
 def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock, model):
     f = make_filter(**model)
