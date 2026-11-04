@@ -60,6 +60,16 @@ def run(f, model, frames, noise=None):
     return outcomes
 
 
+def expm_series(M, terms=10):
+    """expm(M) = sum_k M^k / k!, summed by hand (exact here: every M used below is nilpotent)."""
+    out = np.zeros_like(M)
+    term = np.eye(M.shape[0])
+    for k in range(terms):
+        out += term
+        term = term @ M / (k + 1)
+    return out
+
+
 def steady_rate_std(order, q, std):
     """Return the std of the steady filter's rate estimate under white measurement noise alone."""
     F, Q = kinematic_blocks(order, DT)
@@ -111,6 +121,24 @@ def test_kinematic_blocks_are_the_closed_forms_and_compose():
     F2, Q2 = kinematic_blocks(3, 2 * dt)  # the noise is integrated exactly: two steps are one
     assert np.allclose(F2, F @ F, rtol=1e-14, atol=0.0)
     assert np.allclose(Q2, F @ Q @ F.T + Q, rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize('order', (2, 3))
+def test_kinematic_blocks_are_the_exact_discretization(order):
+    Ac = np.diag(np.ones(order - 1), 1)  # each state is the rate of the one before
+    G = np.zeros((order, 1))
+    G[-1, 0] = 1.0  # unit white noise drives the last state
+    for dt in (0.004, 0.008, 0.05):
+        # Van Loan: expm([[-Ac, G G^T], [0, Ac^T]] dt) = [[., F^-1 Q], [0, F^T]]
+        M = np.zeros((2 * order, 2 * order))
+        M[:order, :order] = -Ac
+        M[:order, order:] = G @ G.T
+        M[order:, order:] = Ac.T
+        E = expm_series(M * dt)
+        F_ref = E[order:, order:].T
+        F, Q = kinematic_blocks(order, dt)
+        assert np.allclose(F, F_ref, rtol=0.0, atol=1e-15)
+        assert np.allclose(Q, F_ref @ E[:order, order:], rtol=1e-12, atol=1e-30)
 
 
 @pytest.mark.parametrize('model', MODELS)

@@ -5,22 +5,8 @@ from vicon_interface.state_estimators import (
     FloatingBaseLinearStateEstimator,
     KalmanFilter,
     linear_motion_model,
-    ViconLinearStateEstimator,
-)
-from vicon_interface.state_estimators.vicon_linear_state_estimator import (
-    constant_acceleration_model,
 )
 from vicon_interface.utils import Daemon, DaemonConfig
-
-
-def expm_series(M, terms=10):
-    """expm(M) = sum_k M^k / k!, summed by hand (exact here: every M used below is nilpotent)."""
-    out = np.zeros_like(M)
-    term = np.eye(M.shape[0])
-    for k in range(terms):
-        out += term
-        term = term @ M / (k + 1)
-    return out
 
 
 def test_kalman_filter_predict_and_correct_match_the_closed_form():
@@ -73,57 +59,6 @@ def test_floating_base_matrices_match_the_original_expm_form():
     assert np.array_equal(est.P, np.eye(6) * 1e-5)
     A, B = linear_motion_model(dt)
     assert np.array_equal(A, est.A) and np.array_equal(B, est.B)
-
-
-def test_constant_acceleration_model_is_the_exact_discretization():
-    q = np.array([10.0, 2.0, 0.5])  # m^2/s^5 per axis
-    Ac = np.zeros((9, 9))
-    Ac[:3, 3:6] = np.eye(3)
-    Ac[3:6, 6:] = np.eye(3)
-    G = np.zeros((9, 3))
-    G[6:] = np.eye(3)
-    for dt in (0.004, 0.008, 0.05):
-        # Van Loan: expm([[-Ac, G q G^T], [0, Ac^T]] dt) = [[., A^-1 Q], [0, A^T]]
-        M = np.zeros((18, 18))
-        M[:9, :9] = -Ac
-        M[:9, 9:] = G @ np.diag(q) @ G.T
-        M[9:, 9:] = Ac.T
-        E = expm_series(M * dt)
-        A_ref = E[9:, 9:].T
-        Q_ref = A_ref @ E[:9, 9:]
-        A, Q = constant_acceleration_model(dt, q)
-        assert np.allclose(A, A_ref, rtol=0.0, atol=1e-15)
-        assert np.allclose(Q, Q_ref, rtol=1e-12, atol=1e-30)
-        A_half, Q_half = constant_acceleration_model(dt / 2, q)
-        assert np.allclose(A_half @ A_half, A, rtol=0.0, atol=1e-15)
-        # two half steps without a measurement equal one full step: a dropped frame costs nothing
-        assert np.allclose(A_half @ Q_half @ A_half.T + Q_half, Q, rtol=1e-12, atol=1e-30)
-
-
-def test_vicon_estimator_observes_position_and_predicts_along_the_model():
-    R = np.diag([4e-8] * 3)
-    P0 = np.diag([4e-8] * 3 + [1.0] * 3 + [25.0] * 3)
-    est = ViconLinearStateEstimator([10.0] * 3, R, P0)
-    C = np.zeros((3, 9))
-    C[:, :3] = np.eye(3)
-    assert np.array_equal(est.C, C)
-    assert np.array_equal(est.x, np.zeros(9))
-
-    x0 = np.array([1.0, 2.0, 3.0, 0.5, -0.5, 0.25, 1.0, 0.0, -2.0])
-    est.reset(x0)
-    dt = 0.01
-    ahead = est.predicted_state(dt)
-    assert np.array_equal(est.x, x0)  # looking ahead does not move the filter
-    x = est.predict_dt(dt)
-    assert np.allclose(x, ahead)
-    assert np.allclose(x[:3], x0[:3] + x0[3:6] * dt + 0.5 * x0[6:] * dt * dt)
-    assert np.allclose(x[3:6], x0[3:6] + x0[6:] * dt)
-    assert np.allclose(x[6:], x0[6:])
-
-    est.correct(x[:3])
-    assert np.array_equal(est.R, R)
-    assert np.allclose(est.x, x)  # a measurement equal to the prediction leaves the state alone
-    assert np.array_equal(est.P, est.P.T)
 
 
 def test_daemon_offline_online_and_jitter_semantics():

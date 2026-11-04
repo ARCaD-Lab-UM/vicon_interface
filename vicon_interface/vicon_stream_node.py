@@ -91,10 +91,26 @@ class ViconStreamNode(Node):
         self.publish_tf_ = (
             self.declare_parameter("publish_tf", True).get_parameter_value().bool_value
         )
-        # Kalman filter and watchdog behind odometry/filtered/<obj>; units in the param file.
-        self.kf_jerk_psd_ = self._read_double_array("kf_jerk_psd", 3)
-        self.kf_measurement_noise_ = self._read_double_array("kf_measurement_noise", 3)
-        self.kf_initial_covariance_ = self._read_double_array("kf_initial_covariance", 9)
+        # Pose filter and watchdog behind odometry/filtered/<obj>; units in the param file.
+        self.kf_motion_model_ = (
+            self.declare_parameter("kf_motion_model", rclpy.Parameter.Type.STRING)
+            .get_parameter_value()
+            .string_value
+        )
+        if self.kf_motion_model_ not in ("cv", "ca"):
+            self.get_logger().fatal(
+                f"`kf_motion_model` must be \"cv\" or \"ca\"; got \"{self.kf_motion_model_}\".")
+            raise ValueError("Bad parameter `kf_motion_model`")
+        noise_psd = {m: self._read_double_array(f"kf_{m}_noise_psd", 2) for m in ("cv", "ca")}
+        self.kf_noise_psd_ = noise_psd[self.kf_motion_model_]
+        self.kf_measurement_std_ = self._read_double_array("kf_measurement_std", 2)
+        self.kf_initial_std_ = self._read_double_array("kf_initial_std", 4)
+        self.kf_gate_sigma_ = self._read_double("kf_gate_sigma")
+        self.kf_max_rejections_ = (
+            self.declare_parameter("kf_max_rejections", rclpy.Parameter.Type.INTEGER)
+            .get_parameter_value()
+            .integer_value
+        )
         self.kf_max_delay_ = self._read_double("kf_max_delay")
         self.kf_clock_window_ = self._read_double("kf_clock_window")
         self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
@@ -146,9 +162,12 @@ class ViconStreamNode(Node):
                     self.rolling_window_size_,
                     offset_xyz=self.child_frame_offsets_xyz_[idx],
                     offset_R=self.child_frame_offsets_R_[idx],
-                    jerk_psd=self.kf_jerk_psd_,
-                    measurement_noise=self.kf_measurement_noise_,
-                    initial_covariance=self.kf_initial_covariance_,
+                    motion_model=self.kf_motion_model_,
+                    noise_psd=self.kf_noise_psd_,
+                    measurement_std=self.kf_measurement_std_,
+                    initial_std=self.kf_initial_std_,
+                    gate_sigma=self.kf_gate_sigma_,
+                    max_rejections=self.kf_max_rejections_,
                     max_delay=self.kf_max_delay_,
                     clock_window=self.kf_clock_window_,
                     offline_timeout=self.vicon_offline_timeout_,
@@ -375,15 +394,16 @@ class ViconStreamNode(Node):
                         throttle_duration_sec=1.0,
                     )
                 continue
-            p_world, v_world, rpy, ang_v_body, stamp = tracked_object.buffer.get_filtered_state()
-            age = time.monotonic() - stamp  # s, since the frame was captured
-            R = tf_transformations.euler_matrix(*rpy, "sxyz")[:3, :3]
-            rpy_now = rpy + age * (R @ ang_v_body)  # rad, moved to now by the world Euler rate
-            R_now = tf_transformations.euler_matrix(*rpy_now, "sxyz")[:3, :3]
-            v_body = R_now.T @ v_world  # m/s, child frame
+            estimate, _ = tracked_object.buffer.get_filtered_state()  # moved to now
+            if estimate is None:
+                continue
+            v_body = estimate.R.T @ estimate.v  # m/s, child frame
+            ang_v_body = estimate.w  # rad/s, child frame
+            m = np.eye(4)
+            m[:3, :3] = estimate.R
 
-            x, y, z = p_world
-            roll, pitch, yaw = rpy_now
+            x, y, z = estimate.p
+            roll, pitch, yaw = tf_transformations.euler_from_matrix(m, "sxyz")
             states = np.array(
                 [
                     x,

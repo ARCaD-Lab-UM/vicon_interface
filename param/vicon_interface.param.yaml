@@ -30,15 +30,19 @@
     poll_vicon_dt: 0.004 # 0.01
     filtered_odom_dt: 0.004 # 0.01
 
-    # Kalman filter behind odometry/filtered/<obj>: world-frame constant acceleration, state (p, v, a)
-    # per axis, white jerk, position-only measurement. Stepped once per Vicon frame by the Vicon clock
-    # (frame number / frame rate); the timer only predicts the latest state to its publish time.
-    # Bandwidth f_n = (q_j / (R * T))^(1/6) / (2 pi), T the frame period: about 10 Hz at 250 Hz here.
-    kf_jerk_psd: [10.0, 10.0, 10.0]                   # m^2/s^5 per axis: white-jerk spectral density q_j
-    kf_measurement_noise: [4.0e-8, 4.0e-8, 4.0e-8]    # m^2 per axis: (0.2 mm)^2, child-frame position noise R
-    kf_initial_covariance: [4.0e-8, 4.0e-8, 4.0e-8,   # m^2 after a reset: p starts at the frame
-                            1.0, 1.0, 1.0,            # (m/s)^2 after a reset: v starts at 0
-                            25.0, 25.0, 25.0]         # (m/s^2)^2 after a reset: a starts at 0
+    # Pose Kalman filter behind odometry/filtered/<obj> (state_estimators/pose_filter.py): the child's
+    # world position and SO(3) orientation, each with its rate ("cv") or rate and acceleration ("ca"),
+    # the next derivative white noise; pose-only measurement. Stepped once per Vicon frame by the Vicon
+    # clock (frame number / frame rate); the timer only predicts the latest estimate to its publish time.
+    # At 250 Hz and 0.2 mm, "cv" gives ~10 mm/s velocity noise and ~10 ms lag; "ca" ~7 mm/s and under
+    # 2 ms lag up to 2 Hz, but overshoots ~40 % after a velocity step such as a foot strike.
+    kf_motion_model: "cv"                  # "cv" constant velocity or "ca" constant acceleration
+    kf_cv_noise_psd: [0.036, 0.9]          # white acceleration: m^2/s^3 position, rad^2/s^3 orientation
+    kf_ca_noise_psd: [10.0, 250.0]         # white jerk: m^2/s^5 position, rad^2/s^5 orientation
+    kf_measurement_std: [2.0e-4, 1.0e-3]   # m, rad: child-frame pose noise; measure on a static log
+    kf_initial_std: [1.0, 2.0, 5.0, 20.0]  # after a reset: m/s, rad/s, m/s^2, rad/s^2 ("ca" reads the last two)
+    kf_gate_sigma: 10.0                    # Mahalanobis distance above which a frame is rejected
+    kf_max_rejections: 5                   # frames rejected in a row that reset the filter
     kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time
     kf_clock_window: 2.0            # s: window of the minimum host-minus-Vicon clock offset
     vicon_offline_timeout: 0.1      # s without a frame: object offline, odometry/filtered paused, reset on return

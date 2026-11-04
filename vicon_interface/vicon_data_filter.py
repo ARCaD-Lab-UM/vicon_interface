@@ -3,23 +3,21 @@ import time
 
 import numpy as np
 
-from vicon_interface.state_estimators import ViconLinearStateEstimator
+from vicon_interface.state_estimators import PoseFilter
 from vicon_interface.utils import Daemon, DaemonConfig
 from vicon_interface.vicon_data_buffer import ViconDataBuffer
 
 
 class ViconDataFilter(ViconDataBuffer):
-    """Rolling buffer plus a constant-acceleration Kalman filter and a watchdog (see AGENTS.md)."""
+    """Rolling buffer, a pose Kalman filter on the Vicon clock and a watchdog (see AGENTS.md)."""
 
     def __init__(self, state_dim, rolling_window_size, offset_xyz=None, offset_R=None, *,
-                 jerk_psd, measurement_noise, initial_covariance, max_delay, clock_window,
-                 offline_timeout, online_jitter_time, owner_id=None):
+                 motion_model, noise_psd, measurement_std, initial_std, gate_sigma,
+                 max_rejections, max_delay, clock_window, offline_timeout, online_jitter_time,
+                 owner_id=None):
         super().__init__(state_dim, rolling_window_size, offset_xyz, offset_R)
-        self.kf_ = ViconLinearStateEstimator(
-            jerk_psd,
-            np.diag(np.asarray(measurement_noise, dtype=float)),
-            np.diag(np.asarray(initial_covariance, dtype=float)),
-        )
+        self.kf_ = PoseFilter(motion_model, noise_psd, measurement_std, initial_std, gate_sigma,
+                              max_rejections, offline_timeout)
         self.daemon_ = Daemon(DaemonConfig(
             set_online_jitter_time_ms=1000.0 * online_jitter_time,
             set_offline_time_ms=1000.0 * offline_timeout,
@@ -36,6 +34,7 @@ class ViconDataFilter(ViconDataBuffer):
         self.kf_needs_reset_ = True
         self.frames_since_online_ = 0
         self.kf_resets_ = 0
+        self.kf_rejections_ = 0  # frames the filter's gate rejected
 
     def add_pose(self, pose, latency, frame_number=None, frame_rate=None):
         """Buffer a pose, step the filter by the frame-number step over frame_rate, then fuse."""
@@ -54,28 +53,30 @@ class ViconDataFilter(ViconDataBuffer):
             )
             if not self.frame_clock_ok_:
                 return  # no Vicon time for this frame: the filter is not stepped
-            z = self.past_poses_[-1, :3]  # m, world position of the child frame
-            if not np.all(np.isfinite(z)):
+            p = self.past_poses_[-1, :3]  # m, world position of the child frame
+            R = self.R_child_  # child orientation in the world frame
+            if not (np.all(np.isfinite(p)) and np.all(np.isfinite(R))):
                 return
             step = None
             if self.frame_number_ is not None:
                 step = (frame_number - self.frame_number_) / frame_rate  # s, Vicon clock
                 if step == 0.0:
                     return  # the same frame twice
-            if (self.kf_needs_reset_ or step is None or not 0.0 < step <= self.max_frame_step_
-                    or not np.all(np.isfinite(self.kf_.get_state()))):
-                x0 = np.zeros(9)
-                x0[:3] = z  # m; v and a start at zero with their initial covariance
-                self.kf_.reset(x0)
+            if self.kf_needs_reset_ or step is None or not 0.0 < step <= self.max_frame_step_:
                 self.frame_time_ = 0.0
+                self.kf_.reset(self.frame_time_, p, R)  # at rest, with the initial covariance
                 self.clock_offsets_.clear()  # the Vicon frame count may have restarted
                 self.kf_resets_ += 1
                 self.kf_needs_reset_ = False
                 self.kf_initialized_ = True
             else:
-                self.kf_.predict_dt(step)  # a dropped frame is one longer step
-                self.kf_.correct(z)
-                self.frame_time_ += step
+                self.frame_time_ += step  # a dropped frame is one longer step
+                outcome = self.kf_.update(self.frame_time_, p, R)
+                if outcome == 'rejected':
+                    self.kf_rejections_ += 1
+                elif outcome == 'reset':  # too many rejected in a row: restarted at the frame
+                    self.kf_resets_ += 1
+                    self.frames_since_online_ = 1
             self.frame_number_ = frame_number
             # capture time on the host clock (frame stamp) minus the Vicon time of the same frame
             self._add_clock_offset(now, self.past_times_[-1] - self.frame_time_)
@@ -105,22 +106,20 @@ class ViconDataFilter(ViconDataBuffer):
             return not self.daemon_.is_error()
 
     def get_filtered_state(self, now=None):
-        """Return copies: world p and v at now, latest raw rpy, body Euler rate, capture stamp.
+        """Return (estimate, stamp): the filter's PoseEstimate at now and the frame's capture time.
 
-        The filter stays at its last fused frame. p and v are predicted from there to now (host
-        monotonic time) along the model, at most max_delay ahead. The stamp is that frame's
-        capture time on the host monotonic clock.
+        The filter stays at its last fused frame; the estimate is predicted from there to now
+        (host monotonic time) along the model, at most max_delay ahead. stamp is that frame's
+        capture time on the host monotonic clock. (None, 0) before the first fused frame.
         """
         with self.lock_:
-            x = self.kf_.get_state()
-            if len(self.past_poses_) == 0 or not self.clock_offsets_:
-                return x[:3], x[3:6], np.zeros(3), np.zeros(3), 0
+            if not self.kf_initialized_ or not self.clock_offsets_:
+                return None, 0
             if now is None:
                 now = time.monotonic()
             stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
-            x = self.kf_.predicted_state(min(max(now - stamp, 0.0), self.max_delay_))
-            rpy = self.past_poses_[-1, 3:].copy()
-            return x[:3], x[3:6], rpy, self.a_.copy(), stamp
+            ahead = min(max(now - stamp, 0.0), self.max_delay_)  # s
+            return self.kf_.predicted(self.frame_time_ + ahead), stamp
 
     def has_frame_clock(self):
         with self.lock_:

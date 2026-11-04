@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import tf_transformations
 
+from vicon_interface.state_estimators.pose_filter import so3_exp, so3_log
 from vicon_interface.vicon_data_buffer import ViconDataBuffer
 from vicon_interface.vicon_data_filter import ViconDataFilter
 
@@ -12,15 +13,20 @@ DT = 0.004  # Vicon frame interval and timer period, s
 RATE = 1.0 / DT  # Hz, the frame rate the SDK reports
 WINDOW = 5
 PARAMS = {
-    'jerk_psd': [10.0] * 3,
-    'measurement_noise': [4e-8] * 3,
-    'initial_covariance': [4e-8] * 3 + [1.0] * 3 + [25.0] * 3,
+    'motion_model': 'cv',
+    'noise_psd': (0.036, 0.9),
+    'measurement_std': (2e-4, 1e-3),
+    'initial_std': (1.0, 2.0, 5.0, 20.0),
+    'gate_sigma': 10.0,
+    'max_rejections': 5,
     'max_delay': 0.02,
     'clock_window': 2.0,
     'offline_timeout': 0.1,
     'online_jitter_time': 0.0,
     'owner_id': 'test',
 }
+CA = {'motion_model': 'ca', 'noise_psd': (10.0, 250.0)}  # the param file's "ca" densities
+MODELS = pytest.mark.parametrize('model', [{}, CA], ids=['cv', 'ca'])
 
 
 class FakeClock:
@@ -43,10 +49,22 @@ def make_filter(**overrides):
     return ViconDataFilter(6, WINDOW, **{**PARAMS, **overrides})
 
 
+def filtered(f, now=None):
+    """Return the filter's estimate at now (host monotonic), as odometry/filtered reads it."""
+    return f.get_filtered_state(now)[0]
+
+
 def node_angles(roll, pitch, yaw):
     """Do what vicon_stream_node does with the SDK's XYZ Euler triple."""
     q = tf_transformations.quaternion_from_euler(roll, pitch, yaw, 'rxyz')
     return tf_transformations.euler_from_quaternion(q, 'sxyz')
+
+
+def sdk_angles(R):
+    """Return the SDK's XYZ Euler triple of the rotation matrix R."""
+    m = np.eye(4)
+    m[:3, :3] = R
+    return tf_transformations.euler_from_matrix(m, 'rxyz')
 
 
 def feed(f, clock, k, pos_m, rpy, latency=0.0, delay=0.0, frame_number=None, frame_rate=RATE):
@@ -75,34 +93,34 @@ def test_startup_waits_for_a_full_window_then_publishes(clock):
     feed(f, clock, WINDOW - 1, v * (WINDOW - 1) * DT, (0.0, 0.0, 0.0))
     assert f.kf_resets_ == 1
     assert f.update() is True
-    p, vw, rpy, a, stamp = f.get_filtered_state()
+    est, stamp = f.get_filtered_state()
     assert stamp == pytest.approx(clock.t)  # latency 0: captured now
-    p[:] = 99.0  # the getter hands out copies
-    vw[:] = 99.0
-    assert not np.any(f.kf_.get_state() == 99.0)
+    est.p[:] = 99.0  # the getter hands out copies
+    est.v[:] = 99.0
+    assert not np.any(f.kf_.state().p == 99.0) and not np.any(f.kf_.state().v == 99.0)
 
 
-def test_constant_velocity_is_tracked_exactly(clock):
-    f = make_filter()
+@MODELS
+def test_constant_velocity_is_tracked_exactly(clock, model):
+    f = make_filter(**model)
     v = np.array([0.3, -0.1, 0.05])
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.1, -0.2, 0.5))
-    p, vw, _, _, _ = f.get_filtered_state()
-    assert np.allclose(vw, v, atol=1e-4)
-    assert np.allclose(p, v * 199 * DT, atol=1e-5)
+    est = filtered(f)
+    assert np.allclose(est.v, v, atol=1e-4)
+    assert np.allclose(est.p, v * 199 * DT, atol=1e-5)
 
 
-def test_constant_acceleration_is_tracked_without_lag(clock):
-    f = make_filter()
+def test_constant_acceleration_is_tracked_without_lag_by_ca(clock):
+    f = make_filter(**CA)
     v0 = np.array([0.2, 0.0, -0.1])
     acc = np.array([0.5, -1.0, 2.0])
     for k in range(300):
         t = k * DT
         feed(f, clock, k, v0 * t + 0.5 * acc * t * t, (0.0, 0.0, 0.0))
     t = 299 * DT
-    p, vw, _, _, _ = f.get_filtered_state()
-    assert np.allclose(vw, v0 + acc * t, atol=1e-4)  # a constant-velocity model would lag here
-    assert np.allclose(f.kf_.get_state()[6:], acc, atol=1e-2)
+    assert np.allclose(filtered(f).v, v0 + acc * t, atol=1e-4)  # "cv" lags here by ~11 ms
+    assert np.allclose(f.kf_.state().a, acc, atol=1e-2)
 
 
 def test_latency_is_compensated_by_predicting_to_now(clock):
@@ -112,12 +130,12 @@ def test_latency_is_compensated_by_predicting_to_now(clock):
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), latency=latency)
     now = clock.t - 100.0  # the last frame arrived latency after its capture
-    p, vw, _, _, stamp = f.get_filtered_state()
-    assert np.allclose(p, v * now, atol=1e-5)  # position at now, not at the frame time
+    est, stamp = f.get_filtered_state()
+    assert np.allclose(est.p, v * now, atol=1e-5)  # position at now, not at the frame time
     assert np.isclose(stamp, 100.0 + 199 * DT)  # the capture time on the host clock
-    p_later = f.get_filtered_state(now=clock.t + 0.005)[0]
-    assert np.allclose(p_later, v * (now + 0.005), atol=1e-5)
-    assert np.allclose(f.get_filtered_state()[0], p)  # looking ahead does not move the filter
+    later = filtered(f, now=clock.t + 0.005)
+    assert np.allclose(later.p, v * (now + 0.005), atol=1e-5)
+    assert np.allclose(filtered(f).p, est.p)  # looking ahead does not move the filter
 
 
 def test_the_prediction_to_now_is_capped_at_max_delay(clock):
@@ -126,15 +144,17 @@ def test_the_prediction_to_now_is_capped_at_max_delay(clock):
     latency = 0.05  # well above the 20 ms cap
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), latency=latency)
-    p, vw, _, _, stamp = f.get_filtered_state()
-    assert np.allclose(p, v * (199 * DT + 0.02), atol=1e-5)  # moved by the cap, not the latency
-    assert np.array_equal(f.kf_.R, np.diag(PARAMS['measurement_noise']))  # R is never rescaled
+    est = filtered(f)
+    assert np.allclose(est.p, v * (199 * DT + 0.02), atol=1e-5)  # by the cap, not the latency
+    std_p = PARAMS['measurement_std'][0]
+    assert np.array_equal(f.kf_.R_trans_, std_p ** 2 * np.eye(3))  # R is never rescaled
 
 
-def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock):
+@MODELS
+def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock, model):
     """The SDK drops frames and the host picks them up late; the Vicon clock keeps dt exact."""
     rng = np.random.default_rng(2)
-    f = make_filter()
+    f = make_filter(**model)
     raw = ViconDataBuffer(6, WINDOW)
     v = np.array([0.5, 0.2, 0.0])
     err_kf, err_fd = [], []
@@ -145,15 +165,18 @@ def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock):
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), delay=delay)
         raw.add_pose((1000.0 * v[0] * k * DT, 1000.0 * v[1] * k * DT, 0.0, 0.0, 0.0, 0.0), 0.0)
         if i >= 100:
-            err_kf.append(np.max(np.abs(f.get_filtered_state()[1] - v)))
+            err_kf.append(np.max(np.abs(filtered(f).v - v)))
             err_fd.append(np.max(np.abs(raw.get_latest_velocity()[0] - v)))
     print(f'worst velocity error: kf {max(err_kf):.2e} m/s, '
           f'host-clocked finite difference {max(err_fd):.3f} m/s')
     assert max(err_kf) < 1e-4
 
 
-def test_sinusoid_velocity_error_is_small_and_below_the_finite_difference(clock):
-    f = make_filter()
+@pytest.mark.parametrize('model, rms_max, fd_ratio', [({}, 0.05, 1.5), (CA, 0.02, 1.0)],
+                         ids=['cv', 'ca'])
+def test_sinusoid_velocity_error_is_small(clock, model, rms_max, fd_ratio):
+    """1 and 2 Hz sinusoids: "cv" lags about as much as the 5-frame difference, "ca" less."""
+    f = make_filter(**model)
     err_kf, err_fd = [], []
     for k in range(500):
         t = k * DT
@@ -162,26 +185,26 @@ def test_sinusoid_velocity_error_is_small_and_below_the_finite_difference(clock)
         if t >= 1.0:
             v_true = np.array([0.2 * np.pi * np.cos(2 * np.pi * t), 0.0,
                                0.08 * np.pi * np.cos(4 * np.pi * t)])
-            _, vw, _, _, _ = f.get_filtered_state()
             v_fd, _, _ = f.get_latest_velocity()
-            err_kf.append(np.linalg.norm(vw - v_true))
+            err_kf.append(np.linalg.norm(filtered(f).v - v_true))
             err_fd.append(np.linalg.norm(v_fd - v_true))
     rms_kf = np.sqrt(np.mean(np.square(err_kf)))
     rms_fd = np.sqrt(np.mean(np.square(err_fd)))
     print(f'sinusoid velocity RMS error: kf {rms_kf:.4f} m/s, finite difference {rms_fd:.4f} m/s')
-    assert rms_kf < 0.02  # about 2 (f / f_n)^2 of the amplitude, f_n ~ 10 Hz
-    assert rms_kf < rms_fd
+    assert rms_kf < rms_max
+    assert rms_kf <= fd_ratio * rms_fd
 
 
-def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(clock):
-    f = make_filter()
+@MODELS
+def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(clock, model):
+    f = make_filter(**model)
     rng = np.random.default_rng(0)
     v_kf, v_fd = [], []
     for k in range(2000):
         pos = np.array([1.0, 2.0, 0.5]) + 1e-4 * rng.standard_normal(3)  # 0.1 mm white noise
         feed(f, clock, k, pos, (0.0, 0.0, 0.0))
         if k >= 100:
-            v_kf.append(f.get_filtered_state()[1])
+            v_kf.append(filtered(f).v)
             v_fd.append(f.get_latest_velocity()[0])
     std_kf = np.std(np.array(v_kf), axis=0)
     std_fd = np.std(np.array(v_fd), axis=0)
@@ -189,19 +212,42 @@ def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(c
     assert np.all(std_kf < std_fd)
 
 
-def test_yaw_wrap_does_not_disturb_the_filtered_velocity(clock):
-    f = make_filter()
+@MODELS
+def test_yaw_wrap_does_not_disturb_the_filtered_estimate(clock, model):
+    f = make_filter(**model)
     v = np.array([0.3, 0.0, 0.0])
-    rate = 2.0  # rad/s; yaw passes +pi at t = 0.3 s, frame 75
-    for k in range(150):
+    rate = 2.0  # rad/s; yaw passes +pi at t = 0.6 s, frame 150, once the start has settled
+    for k in range(250):
         t = k * DT
-        feed(f, clock, k, v * t, (0.0, 0.0, np.pi - 0.6 + rate * t))
-        if k >= 50:
-            _, vw, rpy, a, _ = f.get_filtered_state()
-            assert np.allclose(vw, v, atol=1e-4)
-            R = tf_transformations.euler_matrix(*rpy, 'sxyz')[:3, :3]
-            assert np.allclose(R.T @ vw, R.T @ v, atol=1e-4)
-            assert abs(a[2] - rate) < 1e-6
+        feed(f, clock, k, v * t, (0.0, 0.0, np.pi - 1.2 + rate * t))
+        if k >= 100:
+            est = filtered(f)
+            assert np.allclose(est.v, v, atol=1e-4)
+            assert np.allclose(est.w, [0.0, 0.0, rate], atol=1e-6)
+
+
+@MODELS
+def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(clock, model):
+    f = make_filter(**model)
+    w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis
+    heading = so3_exp(np.array([0.0, 0.0, np.pi / 2]))
+    for k in range(250):
+        feed(f, clock, k, np.zeros(3), sdk_angles(heading @ so3_exp(w_body * k * DT)))
+    est = filtered(f)
+    assert np.allclose(so3_log(est.R.T @ heading @ so3_exp(w_body * 249 * DT)), 0.0, atol=1e-6)
+    assert np.allclose(est.w, w_body, atol=1e-5)  # the Euler-rate twist reads [0, -1, 0] here
+
+
+@MODELS
+def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock, model):
+    f = make_filter(**model)
+    v = np.array([0.3, -0.1, 0.05])
+    for k in range(200):
+        glitch = np.array([0.05, 0.0, 0.0]) if k == 150 else 0.0  # m, one swapped marker
+        feed(f, clock, k, v * k * DT + glitch, (0.0, 0.0, 0.0))
+        if k >= 150:
+            assert np.allclose(filtered(f).v, v, atol=1e-4)
+    assert f.kf_rejections_ == 1 and f.kf_resets_ == 1
 
 
 def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
@@ -217,12 +263,13 @@ def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
         results.append(f.update())
     assert all(results[:25])  # up to 100 ms: still online, the output is a prediction
     assert not any(results[25:])  # after the timeout
-    p_held = f.get_filtered_state()[0]
-    assert np.allclose(p_held, v * (49 * DT + PARAMS['max_delay']), atol=1e-5)  # held at the cap
-    frozen = f.kf_.get_state()
+    held = filtered(f)
+    assert np.allclose(held.p, v * (49 * DT + PARAMS['max_delay']), atol=1e-5)  # held at the cap
+    frozen = f.kf_.state()
     clock.t += DT
     assert f.update() is False
-    assert np.array_equal(f.kf_.get_state(), frozen)
+    assert np.array_equal(f.kf_.state().p, frozen.p)
+    assert np.array_equal(f.kf_.state().v, frozen.v)
     assert f.is_offline()
     k0 = int(round((clock.t - 100.0) / DT)) + 1  # frames resume, continuing the same motion
     for j in range(40):
@@ -231,9 +278,9 @@ def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
         if j < WINDOW - 1:
             assert f.update() is False
     assert f.update() is True
-    p, vw, _, _, _ = f.get_filtered_state()
-    assert np.allclose(vw, v, atol=1e-3)
-    assert np.allclose(p, v * (k0 + 39) * DT, atol=1e-4)
+    est = filtered(f)
+    assert np.allclose(est.v, v, atol=1e-3)
+    assert np.allclose(est.p, v * (k0 + 39) * DT, atol=1e-4)
 
 
 def test_a_nan_frame_is_skipped_and_the_filter_recovers(clock):
@@ -243,12 +290,13 @@ def test_a_nan_frame_is_skipped_and_the_filter_recovers(clock):
         pos = v * k * DT
         if k == 30:
             pos = np.array([np.nan, pos[1], pos[2]])
-        feed(f, clock, k, pos, (0.0, 0.0, 0.0))
-        assert np.all(np.isfinite(f.kf_.get_state()))
+        feed(f, clock, k, pos, (np.nan, 0.0, 0.0) if k == 35 else (0.0, 0.0, 0.0))
+        state = f.kf_.state()
+        assert np.all(np.isfinite(state.p)) and np.all(np.isfinite(state.R))
     assert f.kf_resets_ == 1  # the next frame is just a two-frame step
-    p, vw, _, _, _ = f.get_filtered_state()
-    assert np.allclose(vw, v, atol=1e-3)
-    assert np.allclose(p, v * 49 * DT, atol=1e-4)
+    est = filtered(f)
+    assert np.allclose(est.v, v, atol=1e-3)
+    assert np.allclose(est.p, v * 49 * DT, atol=1e-4)
 
 
 def test_a_restarted_frame_count_restarts_the_filter(clock):
@@ -260,9 +308,9 @@ def test_a_restarted_frame_count_restarts_the_filter(clock):
     for j in range(50):  # Vicon restarts its frame count; frames keep coming on time
         feed(f, clock, 50 + j, v * (50 + j) * DT, (0.0, 0.0, 0.0), frame_number=7 + j)
     assert f.kf_resets_ == 2
-    p, vw, _, _, _ = f.get_filtered_state()
-    assert np.allclose(vw, v, atol=1e-3)
-    assert np.allclose(p, v * 99 * DT, atol=1e-4)
+    est = filtered(f)
+    assert np.allclose(est.v, v, atol=1e-3)
+    assert np.allclose(est.p, v * 99 * DT, atol=1e-4)
 
 
 def test_without_a_frame_rate_the_filter_waits(clock):

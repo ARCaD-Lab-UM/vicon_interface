@@ -50,7 +50,7 @@ velocity and height.
   Kalman filter and watchdog behind `odometry/filtered/<obj>`; the node holds one per object.
 - `vicon_interface/state_estimators/` and `vicon_interface/utils/daemon.py`: arc-bridge's
   `KalmanFilter`, `FloatingBaseLinearStateEstimator` (explicit `A`, no scipy) and `Daemon` ported as
-  they are, plus `ViconLinearStateEstimator` (constant acceleration) and `PoseFilter` (pose only).
+  they are, plus `PoseFilter` (`pose_filter.py`: pose only, constant velocity or acceleration).
 - `launch/vicon_interface.launch.py` starts the node with `param/vicon_interface.param.yaml`.
 - `param/vicon_interface.param.yaml` the only configuration: tracker IP, object names, frames, offsets,
   rates, window size, state clipping, TF switch, Kalman filter and watchdog. Every number lives there.
@@ -66,16 +66,16 @@ velocity and height.
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
   whole rolling window, rotated into the child frame. The orientation rate is an Euler-angle rate, not
   ω. Wrap the angle difference, not the rate: wrapping the rate spiked `twist.angular` at ±180° yaw.
-- `ViconDataFilter` adds a world-frame constant-acceleration Kalman filter (p, v, a per axis, white
-  jerk, position measured) on the Vicon clock: per frame the poll thread predicts by the frame number
-  step over the frame rate, with exact `A(dt)` and `Q(dt)`, then corrects. Host time never enters
-  `dt`; a dropped frame is one longer step. The timer only predicts to its publish time (at most
-  `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
+- `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the child's world position and SO(3)
+  orientation with their rates (`cv`) or rates and accelerations (`ca`), only the pose measured. Per
+  frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
+  gates the frame and corrects; host time never enters `dt`. The timer only predicts to its publish
+  time (at most `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
   `vicon_offline_timeout` without a frame the `Daemon` stops publishing; the next frame resets the
   filter, which publishes again after `rolling_window_size` frames, also how it starts.
 - Topics per object `<obj>` in `vicon_object_names`: `vicon_pose/<obj>` (PoseWithCovarianceStamped),
   `odometry/<obj>` (Odometry, twist in the child frame), `odometry/filtered/<obj>` (Odometry, the
-  Kalman-filtered world position and velocity moved to the publish time, twist in the child frame),
+  filtered pose and twist moved to the publish time, twist in the child frame, angular part true ω),
   `vicon_latency/<obj>` (Float32, seconds, the SDK's `get_latency_total()`), and with `publish_tf` one TF
   `parent_frame_id -> child_frame_id` per object, all objects in one message per frame. The four
   publishers use QoS depth 1; TF uses the `TransformBroadcaster` default.
