@@ -335,39 +335,19 @@ class ViconStreamNode(Node):
                 pose, timestamp = tracked_object.buffer.get_latest_pose()
                 if timestamp == 0:
                     continue
-                x, y, z, roll, pitch, yaw = pose
-
-                states = np.array(
-                    [
-                        x,
-                        y,
-                        z,
-                        roll,
-                        pitch,
-                        yaw,
-                        v_body[0],
-                        v_body[1],
-                        v_body[2],
-                        ang_v_body[0],
-                        ang_v_body[1],
-                        ang_v_body[2],
-                    ]
-                )
-                states = np.clip(states, self.min_states_, self.max_states_)
-                (
-                    x,
-                    y,
-                    z,
-                    roll,
-                    pitch,
-                    yaw,
-                    v_body[0],
-                    v_body[1],
-                    v_body[2],
-                    ang_v_body[0],
-                    ang_v_body[1],
-                    ang_v_body[2],
-                ) = states
+                # vicon_pose and TF carry the Vicon pose; odometry/<obj> the filter's, at the frame
+                x_r, y_r, z_r, roll_r, pitch_r, yaw_r = np.clip(
+                    pose, self.min_states_[:6], self.max_states_[:6])
+                q_r = tf_transformations.quaternion_from_euler(roll_r, pitch_r, yaw_r)
+                odom_pose = pose
+                if self.twist_source_ == "filter" and publish_odom:
+                    m = np.eye(4)
+                    m[:3, :3] = estimate.R
+                    odom_pose = np.r_[estimate.p, tf_transformations.euler_from_matrix(m, "sxyz")]
+                states = np.clip(np.r_[odom_pose, v_body, ang_v_body],
+                                 self.min_states_, self.max_states_)
+                x, y, z, roll, pitch, yaw = states[:6]
+                v_body, ang_v_body = states[6:9], states[9:12]
 
                 odom_msg = Odometry()
                 odom_msg.header.stamp = frame_stamp
@@ -387,20 +367,23 @@ class ViconStreamNode(Node):
                 odom_msg.twist.twist.angular.x = ang_v_body[0]
                 odom_msg.twist.twist.angular.y = ang_v_body[1]
                 odom_msg.twist.twist.angular.z = ang_v_body[2]
-                odom_msg.pose.covariance = self.pose_covariance_  # the Vicon pose as measured
                 if self.twist_source_ == "filter" and publish_odom:
-                    odom_msg.twist.covariance = estimate.odometry_covariances()[1].ravel().tolist()
+                    pose_covariance, twist_covariance = estimate.odometry_covariances()
+                    odom_msg.pose.covariance = pose_covariance.ravel().tolist()
+                    odom_msg.twist.covariance = twist_covariance.ravel().tolist()
+                else:
+                    odom_msg.pose.covariance = self.pose_covariance_  # the Vicon pose as measured
                 if publish_odom:
                     tracked_object.odom_publisher.publish(odom_msg)
 
                 pose_msg = PoseWithCovarianceStamped()
-                pose_msg.pose.pose.position.x = x
-                pose_msg.pose.pose.position.y = y
-                pose_msg.pose.pose.position.z = z
-                pose_msg.pose.pose.orientation.x = q[0]
-                pose_msg.pose.pose.orientation.y = q[1]
-                pose_msg.pose.pose.orientation.z = q[2]
-                pose_msg.pose.pose.orientation.w = q[3]
+                pose_msg.pose.pose.position.x = x_r
+                pose_msg.pose.pose.position.y = y_r
+                pose_msg.pose.pose.position.z = z_r
+                pose_msg.pose.pose.orientation.x = q_r[0]
+                pose_msg.pose.pose.orientation.y = q_r[1]
+                pose_msg.pose.pose.orientation.z = q_r[2]
+                pose_msg.pose.pose.orientation.w = q_r[3]
                 pose_msg.header.stamp = odom_msg.header.stamp
                 pose_msg.pose.covariance = self.pose_covariance_
                 pose_msg.header.frame_id = self.parent_frame_id_
@@ -411,13 +394,13 @@ class ViconStreamNode(Node):
                     transform.header.stamp = odom_msg.header.stamp
                     transform.header.frame_id = self.parent_frame_id_
                     transform.child_frame_id = tracked_object.child_frame_id
-                    transform.transform.translation.x = x
-                    transform.transform.translation.y = y
-                    transform.transform.translation.z = z
-                    transform.transform.rotation.x = q[0]
-                    transform.transform.rotation.y = q[1]
-                    transform.transform.rotation.z = q[2]
-                    transform.transform.rotation.w = q[3]
+                    transform.transform.translation.x = x_r
+                    transform.transform.translation.y = y_r
+                    transform.transform.translation.z = z_r
+                    transform.transform.rotation.x = q_r[0]
+                    transform.transform.rotation.y = q_r[1]
+                    transform.transform.rotation.z = q_r[2]
+                    transform.transform.rotation.w = q_r[3]
                     transforms_to_publish.append(transform)
 
                 latency_msg = Float32()

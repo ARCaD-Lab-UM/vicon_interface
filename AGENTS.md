@@ -74,8 +74,8 @@ velocity and height.
   `vicon_offline_timeout` without a frame the `Daemon` stops publishing; the next frame resets the
   filter, which publishes again after `rolling_window_size` frames, also how it starts.
 - Topics per object `<obj>` in `vicon_object_names`: `vicon_pose/<obj>` (PoseWithCovarianceStamped),
-  `odometry/<obj>` (Odometry, twist in the child frame), `odometry/filtered/<obj>` (Odometry, the
-  filtered pose and twist moved to the publish time, twist in the child frame, angular part true ω),
+  `odometry/<obj>` (Odometry, the filtered pose and twist at the frame), `odometry/filtered/<obj>`
+  (the same moved to the publish time; both twists in the child frame, angular part the true ω),
   `vicon_latency/<obj>` (Float32, seconds, the SDK's `get_latency_total()`), and with `publish_tf` one TF
   `parent_frame_id -> child_frame_id` per object, all objects in one message per frame. QoS depth 1,
   TF the broadcaster's default. Covariances: the raw pose's `kf_measurement_std`, else the filter's.
@@ -115,8 +115,8 @@ degrades the published Euler angles, not the twist.
   publish time and stamped `now()` by design, and pauses while the object is offline; a consumer that
   compensates latency itself uses the unfiltered one, as `humanoid-control` does
   (`modules/bridges/vicon_client`, `/odometry/arcadian`).
-- `odometry/<obj>`'s twist is the pose filter's at its stamp; `twist_source: finite_difference` gives the
-  rolling-window difference back, with about 8 ms of group delay (`rolling_window_size` 5 at 250 Hz).
+- `odometry/<obj>`'s pose and twist are the filter's at its stamp, Vicon's pose stays on `vicon_pose` and
+  TF; `twist_source: finite_difference` brings back Vicon's pose and the rolling-window difference.
 
 ## Where to look next
 
