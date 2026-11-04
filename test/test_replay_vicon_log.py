@@ -86,17 +86,19 @@ def test_a_markers_file_reads_as_the_raw_log_does(tmp_path):
 def test_clean_frames_score_near_zero_and_host_stalls_reach_only_the_host_difference(tmp_path):
     write_npz(tmp_path / 'rec_markers.npz', 600)
     log = rv.read_markers(tmp_path / 'rec_markers.npz', RATE)
-    p = params()
-    p['child_frame_offset_xyz'] = [0.0] * 6  # the child on the rigid body: constant velocity
-    p['child_frame_offset_rpy_deg'] = [0.0] * 6
-    t, p, R, scores, lags = rv.evaluate(log, p, 0)
+    # g1 sits below its rigid body: the filter tracks the body and moves the estimate down,
+    # which is exact; tracking the child, swung on an arc by the rotation, would lag
+    t, p, R, scores, lags = rv.evaluate(log, params(), 0)
     for name in ('vicon', 'filter cv', 'filter ca'):  # "ca" settles last, by 1e-8 at frame 50
         assert scores['position'][name][2] < 1e-7, name  # max error, m
         assert scores['rotation'][name][2] < 1e-7, name  # rad
-    for name in ('frame difference', 'filter cv', 'filter ca'):
+    for name in ('filter cv', 'filter ca'):
         assert scores['velocity'][name][2] < 1e-5, name  # m/s
         assert scores['angular velocity'][name][2] < 1e-5, name  # rad/s
         assert lags['velocity'][name] == 0, name
+    # the difference trails by half its window, which on the child's arc is about a mm/s
+    assert scores['velocity']['frame difference'][2] < 2e-3
+    assert scores['angular velocity']['frame difference'][2] < 1e-5
     assert scores['velocity']['host difference'][2] > 0.05  # the 6 ms stalls, through host time
     assert scores['angular velocity']['host difference'][2] > 0.05
 

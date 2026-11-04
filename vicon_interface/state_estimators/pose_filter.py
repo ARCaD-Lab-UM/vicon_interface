@@ -93,18 +93,52 @@ class PoseEstimate:
     t: float  # s, Vicon time
     p: np.ndarray  # m, world
     v: np.ndarray  # m/s, world
-    a: np.ndarray  # m/s^2, world; zero for 'cv'
+    a: np.ndarray  # m/s^2, world; for 'cv' zero, or a transported frame's lever-arm term
     R: np.ndarray  # world from body
     w: np.ndarray  # rad/s, body
     alpha: np.ndarray  # rad/s^2, body; zero for 'cv'
     P_trans: np.ndarray  # covariance of (p, v[, a])
     P_rot: np.ndarray  # covariance of (d, w[, alpha]), d the body-frame error of R
+    P_cross: np.ndarray = None  # covariance of (p, v[, a]) with (d, w[, alpha]); None is zero
+
+    def transported(self, offset_xyz, offset_R):
+        """Return the estimate of a frame fixed on the body: origin offset_xyz (m, body frame),
+        orientation offset_R (body from frame).
+
+        The rigid-body formulas move the state: p + R d, v + R (w x d), a + R (alpha x d +
+        w x (w x d)), R offset_R, offset_R^T w and offset_R^T alpha. Their first-order map moves
+        the covariance, so the new frame's translation and rotation errors are correlated.
+        """
+        d = np.asarray(offset_xyz, dtype=float)
+        R, w, alpha = self.R, self.w, self.alpha
+        wd = np.cross(w, d)
+        c = np.cross(alpha, d) + np.cross(w, wd)
+        n = self.P_trans.shape[0]  # 6 for 'cv', 9 for 'ca'
+        Sigma = np.zeros((2 * n, 2 * n))
+        Sigma[:n, :n], Sigma[n:, n:] = self.P_trans, self.P_rot
+        if self.P_cross is not None:
+            Sigma[:n, n:], Sigma[n:, :n] = self.P_cross, self.P_cross.T
+        J = np.zeros((2 * n, 2 * n))  # errors of the new frame on the body's, rows on columns
+        J[:n, :n] = np.eye(n)
+        J[0:3, n:n + 3] = -R @ skew(d)  # R exp(d theta) d = R d - R [d]x d theta
+        J[3:6, n:n + 3] = -R @ skew(wd)
+        J[3:6, n + 3:n + 6] = -R @ skew(d)
+        if n == 9:
+            J[6:9, n:n + 3] = -R @ skew(c)
+            J[6:9, n + 3:n + 6] = -R @ (skew(wd) + skew(w) @ skew(d))
+            J[6:9, n + 6:n + 9] = -R @ skew(d)
+        J[n:, n:] = np.kron(np.eye(n // 3), offset_R.T)
+        P = J @ Sigma @ J.T
+        return PoseEstimate(
+            t=self.t, p=self.p + R @ d, v=self.v + R @ wd, a=self.a + R @ c, R=R @ offset_R,
+            w=offset_R.T @ w, alpha=offset_R.T @ alpha, P_trans=P[:n, :n], P_rot=P[n:, n:],
+            P_cross=P[:n, n:])
 
     def odometry_covariances(self):
         """Return the (pose, twist) 6x6 covariances in nav_msgs/Odometry's conventions.
 
         pose: position, then rotation about the world axes, in the world frame. twist: linear,
-        then angular velocity, in the body frame. Translation and rotation are independent here.
+        then angular velocity, in the body frame.
         """
         R = self.R
         pose = np.zeros((6, 6))
@@ -113,6 +147,11 @@ class PoseEstimate:
         twist = np.zeros((6, 6))
         twist[:3, :3] = R.T @ self.P_trans[3:6, 3:6] @ R  # world velocity moved to the body
         twist[3:, 3:] = self.P_rot[3:6, 3:6]
+        if self.P_cross is not None:
+            pose[:3, 3:] = self.P_cross[:3, :3] @ R.T
+            pose[3:, :3] = pose[:3, 3:].T
+            twist[:3, 3:] = R.T @ self.P_cross[3:6, 3:6]
+            twist[3:, :3] = twist[:3, 3:].T
         return pose, twist
 
 

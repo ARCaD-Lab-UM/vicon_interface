@@ -30,16 +30,17 @@
     poll_vicon_dt: 0.004 # 0.01
     filtered_odom_dt: 0.004 # 0.01
 
-    # Pose Kalman filter behind both odometry topics (state_estimators/pose_filter.py): the child's
+    # Pose Kalman filter behind both odometry topics (state_estimators/pose_filter.py): the rigid body's
     # world position and SO(3) orientation, each with its rate ("cv") or rate and acceleration ("ca"),
-    # the next derivative white noise; pose-only measurement. Stepped once per Vicon frame by the Vicon
-    # clock (frame number / frame rate); the timer only predicts the latest estimate to its publish time.
+    # the next derivative white noise; pose-only measurement. Its estimate moves to the child frame with
+    # its own angular velocity. Stepped once per Vicon frame by the Vicon clock (frame number / frame
+    # rate); the timer only predicts the latest estimate to its publish time.
     # At 250 Hz and 0.2 mm, "cv" gives ~10 mm/s velocity noise and ~10 ms lag; "ca" ~7 mm/s and under
     # 2 ms lag up to 2 Hz, but overshoots ~40 % after a velocity step such as a foot strike.
     kf_motion_model: "cv"                  # "cv" constant velocity or "ca" constant acceleration
     kf_cv_noise_psd: [0.036, 0.9]          # white acceleration: m^2/s^3 position, rad^2/s^3 orientation
     kf_ca_noise_psd: [10.0, 250.0]         # white jerk: m^2/s^5 position, rad^2/s^5 orientation
-    kf_measurement_std: [2.0e-4, 1.0e-3]   # m, rad: child-frame pose noise; measure on a static log
+    kf_measurement_std: [2.0e-4, 1.0e-3]   # m, rad: the rigid body's pose noise; measure on a static log
     kf_initial_std: [1.0, 2.0, 5.0, 20.0]  # after a reset: m/s, rad/s, m/s^2, rad/s^2 ("ca" reads the last two)
     kf_gate: [0.02, 0.2]                   # m, rad: innovations above which a frame is rejected (a marker swap)
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter

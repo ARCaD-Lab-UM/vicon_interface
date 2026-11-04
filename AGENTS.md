@@ -66,7 +66,7 @@ velocity and height.
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
   whole rolling window, timed by the Vicon clock, rotated into the child frame. The angular velocity is
   the body rate log(R_first^T R_last) / dt across the window, so yaw at ±180° cannot spike it.
-- `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the child's world position and SO(3)
+- `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the rigid body's position and SO(3)
   orientation with their rates (`cv`) or rates and accelerations (`ca`), only the pose measured. Per
   frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
   gates the frame and corrects; host time never enters `dt`. The timer only predicts to its publish
@@ -86,21 +86,20 @@ velocity and height.
 ## Frame offsets, the one design decision worth knowing
 
 `child_frame_offset_xyz` / `child_frame_offset_rpy_deg` express the pose of the frame to report, in the
-tracked rigid body's own frame (`T_marker->child`). They are applied **per sample inside
-`ViconDataBuffer.add_pose()`, upstream of the finite difference**.
-
-That placement is the point: differentiating the *corrected* position gives the lever-arm term for free:
+tracked rigid body's own frame (`T_marker->child`). With `d` the offset and `R` the body's orientation:
 
 ```
-p_child(t) = p_marker(t) + R(t)·d
-d/dt       = v_marker + Ṙ·d = v_marker + ω × (R·d)
+p_child = p_marker + R·d        v_child = v_marker + R·(ω × d)        ω_child = R_offᵀ·ω
 ```
 
-So the published twist is the child frame's velocity with no angular rate needed anywhere. Correcting
-*after* the differencing, which is what an offset applied downstream would do, fixes position but leaves
-the velocity wrong by `ω × r`. Measured on the real buffer with a 0.25 m arm and a 10° / 1.4 Hz pitch:
-0.384 m/s of false velocity, larger than the robot's own 0.3 m/s forward speed. **Do not move this
-compensation downstream.**
+- **The finite difference** has no ω, so the offset is applied per sample in
+  `ViconDataBuffer.add_pose()`, upstream: differentiating the child's position gives `ω × r` for free.
+  Applied after the difference, the velocity misses it (0.384 m/s on a 0.25 m arm and a 10° / 1.4 Hz
+  pitch). Keep it upstream there.
+- **The pose filter** tracks the rigid body and moves each estimate with its own ω
+  (`PoseEstimate.transported`). Vicon's orientation flicker reaches the child's position times the arm,
+  0.27 mm per mrad at 0.266 m; tracking the body keeps it in the rotation channel, which can then be
+  smoothed on its own (`kf_*_noise_psd`) without slowing the translation.
 
 The YAML's objects today (`g1`, `box`) sit below their rigid bodies (negative z) with axes turned about
 180° in yaw, hence the yaw entries; if a rigid body is redefined, change these entries, nothing

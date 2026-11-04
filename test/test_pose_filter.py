@@ -8,6 +8,7 @@ import pytest
 from vicon_interface.state_estimators.pose_filter import (
     _mahalanobis,
     kinematic_blocks,
+    PoseEstimate,
     PoseFilter,
     so3_exp,
     so3_log,
@@ -328,6 +329,49 @@ def test_predicted_moves_the_estimate_and_leaves_the_filter_unchanged(model):
     for name in ('t', 'p', 'v', 'R', 'w', 'P_trans', 'P_rot'):
         assert np.array_equal(getattr(before, name), getattr(after, name))
     assert np.array_equal(f.predicted(0.0).p, before.p)  # never before the current estimate
+
+
+OFFSET = (np.array([0.05, -0.1, -0.266]), so3_exp(np.array([0.1, -0.2, 3.0])))  # m, rotation
+
+
+@pytest.mark.parametrize('model', MODELS)
+def test_transported_is_exact_for_a_rigid_motion(model):
+    f = make_filter(model)
+    run(f, model, range(400))
+    d, R_off = OFFSET
+    child = f.state().transported(d, R_off)
+    p, R, v, w = motion(model, 399 * DT)
+    assert np.allclose(child.p, p + R @ d, atol=1e-9)
+    assert np.allclose(so3_log((R @ R_off).T @ child.R), 0.0, atol=1e-9)
+    assert np.allclose(child.v, v + R @ np.cross(w, d), atol=1e-7)  # the lever arm's w x d
+    assert np.allclose(child.w, R_off.T @ w, atol=1e-7)
+
+
+@pytest.mark.parametrize('model', MODELS)
+def test_transported_covariance_matches_the_spread_of_sampled_states(model):
+    rng = np.random.default_rng(6)
+    f = make_filter(model)
+    run(f, model, range(100))
+    est = f.state()
+    n = est.P_trans.shape[0]
+    A = rng.standard_normal((2 * n, 2 * n))
+    Sigma = 1e-8 * (A @ A.T + np.eye(2 * n))  # small enough for first order, and correlated
+    est.P_trans, est.P_rot, est.P_cross = Sigma[:n, :n], Sigma[n:, n:], Sigma[:n, n:]
+    d, R_off = OFFSET
+    child = est.transported(d, R_off)
+    rows = []
+    for e in rng.multivariate_normal(np.zeros(2 * n), Sigma, size=10000):
+        rates = n // 3 - 1  # rate states per channel beyond the value
+        moved = PoseEstimate(
+            est.t, est.p + e[0:3], est.v + e[3:6], est.a + (e[6:9] if rates == 2 else 0.0),
+            est.R @ so3_exp(e[n:n + 3]), est.w + e[n + 3:n + 6],
+            est.alpha + (e[n + 6:n + 9] if rates == 2 else 0.0), est.P_trans, est.P_rot)
+        moved = moved.transported(d, R_off)
+        row = [moved.p - child.p, moved.v - child.v] + ([moved.a - child.a] if rates == 2 else [])
+        row += [so3_log(child.R.T @ moved.R), moved.w - child.w]
+        rows.append(np.concatenate(row + ([moved.alpha - child.alpha] if rates == 2 else [])))
+    P = np.block([[child.P_trans, child.P_cross], [child.P_cross.T, child.P_rot]])
+    assert np.allclose(np.cov(np.array(rows).T), P, rtol=0.1, atol=0.05 * np.abs(P).max())
 
 
 def test_odometry_covariances_move_each_block_to_its_message_frame():

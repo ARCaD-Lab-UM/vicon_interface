@@ -262,6 +262,24 @@ def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(
     assert np.allclose(est.w, w_body, atol=1e-5)  # the Euler-rate twist reads [0, -1, 0] here
 
 
+@MODELS
+def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock, model):
+    offset_xyz = np.array([0.0, 0.0, -0.266])  # m, g1 below its rigid body, turned in yaw
+    offset_R = so3_exp(np.array([0.0, 0.0, np.pi]))
+    f = make_filter(offset_xyz=offset_xyz, offset_R=offset_R, **model)
+    v = np.array([0.3, -0.1, 0.05])  # m/s, the rigid body's origin
+    w = np.array([0.4, -0.3, 1.2])  # rad/s, body
+    R0 = so3_exp(np.array([0.1, 0.2, -0.5]))
+    for k in range(400):
+        feed(f, clock, k, v * k * DT, sdk_angles(R0 @ so3_exp(w * k * DT)))
+    est, _ = f.get_frame_state()
+    R = R0 @ so3_exp(w * 399 * DT)
+    assert np.allclose(est.p, v * 399 * DT + R @ offset_xyz, atol=1e-7)
+    assert np.allclose(so3_log((R @ offset_R).T @ est.R), 0.0, atol=1e-7)
+    assert np.allclose(est.v, v + R @ np.cross(w, offset_xyz), atol=1e-5)  # world
+    assert np.allclose(est.w, offset_R.T @ w, atol=1e-5)  # the child's body frame
+
+
 def test_the_finite_difference_reports_the_body_angular_velocity(clock):
     f = make_filter()
     w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis

@@ -32,6 +32,8 @@ class ViconDataBuffer:
         self.v_ = None
         self.a_ = None
         self.R_child_ = None
+        self.marker_p_ = None  # m, the rigid body's origin in the world, for ViconDataFilter
+        self.marker_R_ = None  # the rigid body's orientation in the world
 
     def add_pose(self, pose, latency, frame_time=None):
         """Buffer a pose captured latency (s) ago, at frame_time (s) on the Vicon clock if given.
@@ -56,6 +58,8 @@ class ViconDataBuffer:
             # child's trajectory.
             # R is used to express the velocity in the child's own frame; in CHILD orientation, not the marker's.
             R = tf_transformations.euler_matrix(roll, pitch, yaw, "sxyz")[:3, :3]
+            self.marker_p_ = np.array([x, y, z])
+            self.marker_R_ = R
             if self.has_offset_:
                 x, y, z = np.array([x, y, z]) + R @ self.offset_xyz_
                 R = R @ self.offset_R_

@@ -54,8 +54,10 @@ class ViconDataFilter(ViconDataBuffer):
             self.frame_clock_ok_ = clock_ok
             if not self.frame_clock_ok_:
                 return  # no Vicon time for this frame: the filter is not stepped
-            p = self.past_poses_[-1, :3]  # m, world position of the child frame
-            R = self.R_child_  # child orientation in the world frame
+            # The rigid body itself: its estimate moves to the child at the output. Fed the child,
+            # the filter would take orientation noise times the offset arm as position noise.
+            p = self.marker_p_  # m, the rigid body's origin in the world
+            R = self.marker_R_  # the rigid body's orientation in the world
             if not (np.all(np.isfinite(p)) and np.all(np.isfinite(R))):
                 return
             step = None
@@ -108,11 +110,12 @@ class ViconDataFilter(ViconDataBuffer):
             return not self.daemon_.is_error()
 
     def get_filtered_state(self, now=None):
-        """Return (estimate, stamp): the filter's PoseEstimate at now and the frame's capture time.
+        """Return (estimate, stamp): the child frame's PoseEstimate at now and the frame's capture.
 
         The filter stays at its last fused frame; the estimate is predicted from there to now
-        (host monotonic time) along the model, at most max_delay ahead. stamp is that frame's
-        capture time on the host monotonic clock. (None, 0) before the first fused frame.
+        (host monotonic time) along the model, at most max_delay ahead, then moved to the child.
+        stamp is that frame's capture time on the host monotonic clock. (None, 0) before the
+        first fused frame.
         """
         with self.lock_:
             if not self.kf_initialized_ or not self.clock_offsets_:
@@ -121,15 +124,16 @@ class ViconDataFilter(ViconDataBuffer):
                 now = time.monotonic()
             stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
             ahead = min(max(now - stamp, 0.0), self.max_delay_)  # s
-            return self.kf_.predicted(self.frame_time_ + ahead), stamp
+            estimate = self.kf_.predicted(self.frame_time_ + ahead)
+            return estimate.transported(self.offset_xyz_, self.offset_R_), stamp
 
     def get_frame_state(self):
         """Return (estimate, stamp) for the latest frame, as odometry/<obj> reads it.
 
         stamp is the frame's capture time on the host monotonic clock, from the Vicon clock and
         the minimum offset; None when the frame was not fused. estimate is the filter's
-        PoseEstimate at that frame; None as well while the filter has fused fewer than
-        rolling_window_size frames since it started.
+        PoseEstimate at that frame, moved to the child; None as well while the filter has fused
+        fewer than rolling_window_size frames since it started.
         """
         with self.lock_:
             if not self.fused_:
@@ -137,7 +141,7 @@ class ViconDataFilter(ViconDataBuffer):
             stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
             if self.frames_since_online_ < self.rolling_window_size_:
                 return None, stamp
-            return self.kf_.state(), stamp
+            return self.kf_.state().transported(self.offset_xyz_, self.offset_R_), stamp
 
     def has_frame_clock(self):
         with self.lock_:
