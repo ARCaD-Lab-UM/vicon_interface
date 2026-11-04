@@ -38,8 +38,8 @@ velocity and height.
   must be importable by the system interpreter, not by a conda Python on `PATH`.
 - Dependencies are `package.xml` (rosdep: `rclpy`, the message packages, `tf2_ros`, `tf_transformations`)
   plus `pyvicon-datastream` from PyPI, which `setup.py` lists but rosdep cannot install.
-- `test/` holds the ament lint stubs (copyright skipped, flake8, pep257) and two ROS-free pytest files
-  for the Kalman filter and `ViconDataFilter`; the commands are in `README.md`.
+- `test/` holds the ament lint stubs (copyright skipped, flake8, pep257) and ROS-free pytest files for
+  the estimators, `PoseFilter` and `ViconDataFilter`; the commands are in `README.md`.
 
 ## Layout
 
@@ -50,7 +50,7 @@ velocity and height.
   Kalman filter and watchdog behind `odometry/filtered/<obj>`; the node holds one per object.
 - `vicon_interface/state_estimators/` and `vicon_interface/utils/daemon.py`: arc-bridge's
   `KalmanFilter`, `FloatingBaseLinearStateEstimator` (explicit `A`, no scipy) and `Daemon` ported as
-  they are, plus the new `ViconLinearStateEstimator` (constant acceleration, position observed).
+  they are, plus `ViconLinearStateEstimator` (constant acceleration) and `PoseFilter` (pose only).
 - `launch/vicon_interface.launch.py` starts the node with `param/vicon_interface.param.yaml`.
 - `param/vicon_interface.param.yaml` the only configuration: tracker IP, object names, frames, offsets,
   rates, window size, state clipping, TF switch, Kalman filter and watchdog. Every number lives there.
