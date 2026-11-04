@@ -30,16 +30,17 @@
     poll_vicon_dt: 0.004 # 0.01
     filtered_odom_dt: 0.004 # 0.01
 
-    # Kalman filter behind odometry/filtered/<obj>: world-frame state (px, py, pz, vx, vy, vz), zero
-    # acceleration. Corrected once per Vicon frame with the child position moved to now by the frame
-    # age and the rolling-window velocity; predicted every filtered_odom_dt by the timer.
-    kf_process_noise: [1.0e-8, 1.0e-8, 1.0e-8,        # m^2 per predict step
-                       1.44e-4, 1.44e-4, 1.44e-4]     # (m/s)^2 per predict step: (3 m/s^2 * 4 ms)^2
-    kf_measurement_noise: [4.0e-8, 4.0e-8, 4.0e-8,    # m^2: (0.2 mm)^2, Vicon jitter plus the move to now
-                           2.5e-4, 2.5e-4, 2.5e-4]    # (m/s)^2: (1.6 cm/s)^2, 5-frame finite difference
-    kf_initial_covariance: [1.0e-4, 1.0e-4, 1.0e-4,   # m^2 after a reset
-                            1.0, 1.0, 1.0]            # (m/s)^2 after a reset; the next frames set v
-    kf_max_delay: 0.02              # s: cap on the frame age used to move a measurement to now (tron1 bridge: 20 ms)
+    # Kalman filter behind odometry/filtered/<obj>: world-frame constant acceleration, state (p, v, a)
+    # per axis, white jerk, position-only measurement. Stepped once per Vicon frame by the Vicon clock
+    # (frame number / frame rate); the timer only predicts the latest state to its publish time.
+    # Bandwidth f_n = (q_j / (R * T))^(1/6) / (2 pi), T the frame period: about 10 Hz at 250 Hz here.
+    kf_jerk_psd: [10.0, 10.0, 10.0]                   # m^2/s^5 per axis: white-jerk spectral density q_j
+    kf_measurement_noise: [4.0e-8, 4.0e-8, 4.0e-8]    # m^2 per axis: (0.2 mm)^2, child-frame position noise R
+    kf_initial_covariance: [4.0e-8, 4.0e-8, 4.0e-8,   # m^2 after a reset: p starts at the frame
+                            1.0, 1.0, 1.0,            # (m/s)^2 after a reset: v starts at 0
+                            25.0, 25.0, 25.0]         # (m/s^2)^2 after a reset: a starts at 0
+    kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time
+    kf_clock_window: 2.0            # s: window of the minimum host-minus-Vicon clock offset
     vicon_offline_timeout: 0.1      # s without a frame: object offline, odometry/filtered paused, reset on return
     vicon_online_jitter_time: 0.0   # s after return before odometry/filtered resumes; the clean-window rule already waits
 

@@ -1,3 +1,4 @@
+from collections import deque
 import time
 
 import numpy as np
@@ -8,15 +9,14 @@ from vicon_interface.vicon_data_buffer import ViconDataBuffer
 
 
 class ViconDataFilter(ViconDataBuffer):
-    """Rolling buffer plus a constant-velocity Kalman filter and a watchdog (see AGENTS.md)."""
+    """Rolling buffer plus a constant-acceleration Kalman filter and a watchdog (see AGENTS.md)."""
 
     def __init__(self, state_dim, rolling_window_size, offset_xyz=None, offset_R=None, *,
-                 process_noise, measurement_noise, initial_covariance, max_delay, predict_dt,
+                 jerk_psd, measurement_noise, initial_covariance, max_delay, clock_window,
                  offline_timeout, online_jitter_time, owner_id=None):
         super().__init__(state_dim, rolling_window_size, offset_xyz, offset_R)
         self.kf_ = ViconLinearStateEstimator(
-            predict_dt,
-            np.diag(np.asarray(process_noise, dtype=float)),
+            jerk_psd,
             np.diag(np.asarray(measurement_noise, dtype=float)),
             np.diag(np.asarray(initial_covariance, dtype=float)),
         )
@@ -25,44 +25,71 @@ class ViconDataFilter(ViconDataBuffer):
             set_offline_time_ms=1000.0 * offline_timeout,
             owner_id=owner_id,
         ))
-        self.max_delay_ = float(max_delay)  # s, cap on the move of a measurement to now
+        self.max_delay_ = float(max_delay)  # s, cap on the prediction from the last frame to now
+        self.max_frame_step_ = float(offline_timeout)  # s of Vicon time; a longer step resets
+        self.clock_window_ = float(clock_window)  # s of host time behind the clock offset minimum
+        self.clock_offsets_ = deque()  # (host s, host minus Vicon s), offsets increasing
+        self.frame_number_ = None  # Vicon frame number of the last fused frame
+        self.frame_time_ = 0.0  # s, Vicon time of the last fused frame, 0 at the last reset
+        self.frame_clock_ok_ = True  # False while frames come without a usable frame rate
         self.kf_initialized_ = False
         self.kf_needs_reset_ = True
         self.frames_since_online_ = 0
         self.kf_resets_ = 0
 
-    def add_pose(self, pose, latency):
+    def add_pose(self, pose, latency, frame_number=None, frame_rate=None):
+        """Buffer a pose, step the filter by the frame-number step over frame_rate, then fuse."""
         super().add_pose(pose, latency)
         with self.lock_:
             now = time.monotonic()
             now_ms = 1000.0 * now
-            stamp = self.past_times_[-1]
-            # s, frame age (Vicon latency plus processing delay since the grab), capped
-            d = min(max(now - stamp, 0.0), self.max_delay_)
             self.daemon_.update(now_ms)  # catches a gap even if the timer did not run
             if self.daemon_.is_offline():
                 self.frames_since_online_ = 0
                 self.kf_needs_reset_ = True
             self.daemon_.reload(now_ms)
             self.frames_since_online_ += 1
-            if self.frames_since_online_ < self.rolling_window_size_:
-                # the window still holds pre-gap samples, or the zero velocity of a short window
+            self.frame_clock_ok_ = (
+                frame_number is not None and frame_rate is not None and frame_rate > 0.0
+            )
+            if not self.frame_clock_ok_:
+                return  # no Vicon time for this frame: the filter is not stepped
+            z = self.past_poses_[-1, :3]  # m, world position of the child frame
+            if not np.all(np.isfinite(z)):
                 return
-            v_world = self.R_child_ @ self.v_  # m/s, world; undoes the base's R.T
-            p_now = self.past_poses_[-1, :3] + v_world * d  # m, moved to now, a = 0
-            y = np.concatenate((p_now, v_world))
-            if not np.all(np.isfinite(y)):
-                return
-            if self.kf_needs_reset_ or not np.all(np.isfinite(self.kf_.get_state())):
-                self.kf_.reset(y)
+            step = None
+            if self.frame_number_ is not None:
+                step = (frame_number - self.frame_number_) / frame_rate  # s, Vicon clock
+                if step == 0.0:
+                    return  # the same frame twice
+            if (self.kf_needs_reset_ or step is None or not 0.0 < step <= self.max_frame_step_
+                    or not np.all(np.isfinite(self.kf_.get_state()))):
+                x0 = np.zeros(9)
+                x0[:3] = z  # m; v and a start at zero with their initial covariance
+                self.kf_.reset(x0)
+                self.frame_time_ = 0.0
+                self.clock_offsets_.clear()  # the Vicon frame count may have restarted
                 self.kf_resets_ += 1
                 self.kf_needs_reset_ = False
                 self.kf_initialized_ = True
             else:
-                self.kf_.correct(y)
+                self.kf_.predict_dt(step)  # a dropped frame is one longer step
+                self.kf_.correct(z)
+                self.frame_time_ += step
+            self.frame_number_ = frame_number
+            # capture time on the host clock (frame stamp) minus the Vicon time of the same frame
+            self._add_clock_offset(now, self.past_times_[-1] - self.frame_time_)
+
+    def _add_clock_offset(self, now, offset):
+        """Keep the minimum host-minus-Vicon offset over clock_window: delays only add to it."""
+        while self.clock_offsets_ and self.clock_offsets_[-1][1] >= offset:
+            self.clock_offsets_.pop()
+        self.clock_offsets_.append((now, offset))
+        while now - self.clock_offsets_[0][0] > self.clock_window_:
+            self.clock_offsets_.popleft()
 
     def update(self, now=None):
-        """Run one timer step: watchdog update and predict; True when the filter may publish."""
+        """Run one timer step of the watchdog; True when the filter may publish."""
         with self.lock_:
             if now is None:
                 now = time.monotonic()
@@ -73,17 +100,31 @@ class ViconDataFilter(ViconDataBuffer):
                 return False
             if not self.kf_initialized_ or self.kf_needs_reset_:
                 return False
-            self.kf_.predict(np.zeros(3))
+            if self.frames_since_online_ < self.rolling_window_size_:
+                return False  # the filter has fused only a few post-gap frames
             return not self.daemon_.is_error()
 
-    def get_filtered_state(self):
-        """Return copies: world p and v, latest raw rpy, body Euler rate, frame stamp."""
+    def get_filtered_state(self, now=None):
+        """Return copies: world p and v at now, latest raw rpy, body Euler rate, capture stamp.
+
+        The filter stays at its last fused frame. p and v are predicted from there to now (host
+        monotonic time) along the model, at most max_delay ahead. The stamp is that frame's
+        capture time on the host monotonic clock.
+        """
         with self.lock_:
             x = self.kf_.get_state()
-            if len(self.past_poses_) == 0:
-                return x[:3], x[3:], np.zeros(3), np.zeros(3), 0
+            if len(self.past_poses_) == 0 or not self.clock_offsets_:
+                return x[:3], x[3:6], np.zeros(3), np.zeros(3), 0
+            if now is None:
+                now = time.monotonic()
+            stamp = self.frame_time_ + self.clock_offsets_[0][1]  # s, host monotonic
+            x = self.kf_.predicted_state(min(max(now - stamp, 0.0), self.max_delay_))
             rpy = self.past_poses_[-1, 3:].copy()
-            return x[:3], x[3:], rpy, self.a_.copy(), self.past_times_[-1]
+            return x[:3], x[3:6], rpy, self.a_.copy(), stamp
+
+    def has_frame_clock(self):
+        with self.lock_:
+            return self.frame_clock_ok_
 
     def is_online(self):
         with self.lock_:

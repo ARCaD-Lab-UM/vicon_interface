@@ -92,10 +92,11 @@ class ViconStreamNode(Node):
             self.declare_parameter("publish_tf", True).get_parameter_value().bool_value
         )
         # Kalman filter and watchdog behind odometry/filtered/<obj>; units in the param file.
-        self.kf_process_noise_ = self._read_double_array("kf_process_noise", 6)
-        self.kf_measurement_noise_ = self._read_double_array("kf_measurement_noise", 6)
-        self.kf_initial_covariance_ = self._read_double_array("kf_initial_covariance", 6)
+        self.kf_jerk_psd_ = self._read_double_array("kf_jerk_psd", 3)
+        self.kf_measurement_noise_ = self._read_double_array("kf_measurement_noise", 3)
+        self.kf_initial_covariance_ = self._read_double_array("kf_initial_covariance", 9)
         self.kf_max_delay_ = self._read_double("kf_max_delay")
+        self.kf_clock_window_ = self._read_double("kf_clock_window")
         self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
         self.vicon_online_jitter_time_ = self._read_double("vicon_online_jitter_time")
 
@@ -145,11 +146,11 @@ class ViconStreamNode(Node):
                     self.rolling_window_size_,
                     offset_xyz=self.child_frame_offsets_xyz_[idx],
                     offset_R=self.child_frame_offsets_R_[idx],
-                    process_noise=self.kf_process_noise_,
+                    jerk_psd=self.kf_jerk_psd_,
                     measurement_noise=self.kf_measurement_noise_,
                     initial_covariance=self.kf_initial_covariance_,
                     max_delay=self.kf_max_delay_,
-                    predict_dt=self.filtered_odom_dt_,
+                    clock_window=self.kf_clock_window_,
                     offline_timeout=self.vicon_offline_timeout_,
                     online_jitter_time=self.vicon_online_jitter_time_,
                     owner_id=object_name,
@@ -229,6 +230,7 @@ class ViconStreamNode(Node):
                 if frame_result == pv.Result.Success:
                     latency = self.tracker_.vicon_client.get_latency_total()
                     framenumber = self.tracker_.vicon_client.get_frame_number()
+                    frame_rate = self.tracker_.vicon_client.get_frame_rate()  # Hz
                     position = self.tracker_._get_object_position(object_name)
                     if latency is None or framenumber is None or not position:
                         self.get_logger().warning(f"Missing object `{object_name}` data in frame.",throttle_duration_sec=1.0)
@@ -251,7 +253,9 @@ class ViconStreamNode(Node):
                     _, _, x, y, z, roll, pitch, yaw = obj
                     q = tf_transformations.quaternion_from_euler(roll, pitch, yaw, "rxyz")
                     roll, pitch, yaw = tf_transformations.euler_from_quaternion(q, "sxyz")
-                    tracked_object.buffer.add_pose((x, y, z, roll, pitch, yaw), latency)
+                    tracked_object.buffer.add_pose(
+                        (x, y, z, roll, pitch, yaw), latency, frame_num, frame_rate
+                    )
                 except Exception as e:
                     self.get_logger().warning(
                         f"Vicon dropped a frame for `{object_name}`: {e}",
@@ -361,6 +365,12 @@ class ViconStreamNode(Node):
                 if tracked_object.buffer.is_offline():
                     self.get_logger().warning(
                         f"No Vicon frame for `{object_name}` within vicon_offline_timeout, "
+                        "odometry/filtered paused.",
+                        throttle_duration_sec=1.0,
+                    )
+                elif not tracked_object.buffer.has_frame_clock():
+                    self.get_logger().warning(
+                        f"Vicon reports no frame rate for `{object_name}`, "
                         "odometry/filtered paused.",
                         throttle_duration_sec=1.0,
                     )
