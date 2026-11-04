@@ -30,7 +30,7 @@
     poll_vicon_dt: 0.004 # 0.01
     filtered_odom_dt: 0.004 # 0.01
 
-    # Pose Kalman filter behind odometry/filtered/<obj> (state_estimators/pose_filter.py): the child's
+    # Pose Kalman filter behind both odometry topics (state_estimators/pose_filter.py): the child's
     # world position and SO(3) orientation, each with its rate ("cv") or rate and acceleration ("ca"),
     # the next derivative white noise; pose-only measurement. Stepped once per Vicon frame by the Vicon
     # clock (frame number / frame rate); the timer only predicts the latest estimate to its publish time.

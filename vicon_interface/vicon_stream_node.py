@@ -95,7 +95,7 @@ class ViconStreamNode(Node):
         self.publish_tf_ = (
             self.declare_parameter("publish_tf", True).get_parameter_value().bool_value
         )
-        # Pose filter and watchdog behind odometry/filtered/<obj>; units in the param file.
+        # Pose filter and watchdog behind both odometry topics; units in the param file.
         self.kf_motion_model_ = (
             self.declare_parameter("kf_motion_model", rclpy.Parameter.Type.STRING)
             .get_parameter_value()
