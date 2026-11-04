@@ -59,10 +59,9 @@ class ViconDataBuffer:
                 self.v_ = (self.past_poses_[-1, :3] - self.past_poses_[0, :3]) / (
                     self.past_times_[-1] - self.past_times_[0]
                 )
-                self.a_ = (self.past_poses_[-1, 3:] - self.past_poses_[0, 3:]) / (
-                    self.past_times_[-1] - self.past_times_[0]
-                )
-                self.a_ = np.arctan2(np.sin(self.a_), np.cos(self.a_))
+                d_angle = self.past_poses_[-1, 3:] - self.past_poses_[0, 3:]
+                d_angle = np.arctan2(np.sin(d_angle), np.cos(d_angle))  # wrap to [-pi, pi], rad
+                self.a_ = d_angle / (self.past_times_[-1] - self.past_times_[0])
             else:
                 self.v_ = np.zeros(3)
                 self.a_ = np.zeros(3)
@@ -127,17 +126,16 @@ class ViconDataFilter:
                 self.last_time_ = time_stamp
                 return
             this_pose = np.array([x, y, z, roll, pitch, yaw])
-            new_filtered_pose = self.last_pose_ + self.epow_ * (
-                this_pose - self.last_pose_
-            )
+            delta = this_pose - self.last_pose_
+            delta[3:] = np.arctan2(np.sin(delta[3:]), np.cos(delta[3:]))  # wrap to [-pi, pi], rad
+            new_filtered_pose = self.last_pose_ + self.epow_ * delta
 
             self.v_ = (new_filtered_pose[:3] - self.last_pose_[:3]) / (
                 time_stamp - self.last_time_
             )
-            self.a_ = (new_filtered_pose[3:] - self.last_pose_[3:]) / (
-                time_stamp - self.last_time_
-            )
-            self.a_ = np.arctan2(np.sin(self.a_), np.cos(self.a_))
+            d_angle = new_filtered_pose[3:] - self.last_pose_[3:]
+            d_angle = np.arctan2(np.sin(d_angle), np.cos(d_angle))  # wrap to [-pi, pi], rad
+            self.a_ = d_angle / (time_stamp - self.last_time_)
             R = tf_transformations.euler_matrix(
                 new_filtered_pose[3], new_filtered_pose[4], new_filtered_pose[5], "sxyz"
             )[:3, :3]

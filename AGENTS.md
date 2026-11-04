@@ -62,7 +62,8 @@ velocity and height.
   `ViconDataBuffer`, under its lock. Its getters return copies: the node writes clipped values into them.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
   triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
-  whole rolling window, rotated into the child frame. The orientation rate is an Euler-angle rate, not ω.
+  whole rolling window, rotated into the child frame. The orientation rate is an Euler-angle rate, not
+  ω. Wrap the angle difference, not the rate: wrapping the rate spiked `twist.angular` at ±180° yaw.
 - Topics per object `<obj>` in `vicon_object_names`: `vicon_pose/<obj>` (PoseWithCovarianceStamped),
   `odometry/<obj>` (Odometry, twist in the child frame), `odometry/filtered/<obj>` (Odometry, the latest
   pose extrapolated by the latest velocity to the timer tick), `vicon_latency/<obj>` (Float32, seconds,
