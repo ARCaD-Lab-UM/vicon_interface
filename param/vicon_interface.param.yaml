@@ -44,6 +44,7 @@
     kf_gate_sigma: 10.0                    # Mahalanobis distance above which a frame is rejected
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter
     twist_source: "filter"                 # odometry/<obj> twist: "filter" at the frame, or "finite_difference"
+    raw_log_path: ""                       # CSV of every raw frame for replay_vicon_log.py, strftime allowed; "" off
     kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time
     kf_clock_window: 2.0            # s: window of the minimum host-minus-Vicon clock offset
     vicon_offline_timeout: 0.1      # s without a frame: object offline, odometry/filtered paused, reset on return

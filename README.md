@@ -51,7 +51,17 @@ The unit tests need no Vicon and no running node, only the sourced ROS environme
 
 ```bash
 source /opt/ros/$ROS_DISTRO/setup.bash
-/usr/bin/python3 -m pytest test/test_state_estimators.py test/test_pose_filter.py test/test_vicon_data_filter.py
+/usr/bin/python3 -m pytest test/test_state_estimators.py test/test_pose_filter.py test/test_vicon_data_filter.py test/test_replay_vicon_log.py
 ```
 
 `colcon test --packages-select vicon_interface` runs the same tests plus the ament linters, which still report the package's older style findings.
+
+# Tune
+
+Set `raw_log_path` in `param/vicon_interface.param.yaml` (for example `/tmp/vicon_raw_%Y%m%d-%H%M%S.csv`) and run the node: it logs every frame as the SDK gave it. Record a stretch at rest and a stretch of motion, then replay the log from this directory, with ROS sourced:
+
+```bash
+/usr/bin/python3 replay_vicon_log.py /tmp/vicon_raw_<time>.csv --object g1 --static 0 20
+```
+
+It feeds the log to the node's estimators and prints how late the host picked frames up, then, for the old host-clocked finite difference, the frame-clocked one and the pose filter with each motion model, the deviation from a zero-phase reference, the lag and the frame-to-frame jumps. `--static T0 T1` (seconds from the first frame) prints the pose noise at rest, the values for `kf_measurement_std`. Raise `kf_cv_noise_psd` (or `kf_ca_noise_psd`) for less lag, lower it for less noise.
