@@ -50,7 +50,7 @@ velocity and height.
   Kalman filter and watchdog behind `odometry/filtered/<obj>`; the node holds one per object.
 - `vicon_interface/state_estimators/` and `vicon_interface/utils/daemon.py`: arc-bridge's
   `KalmanFilter`, `FloatingBaseLinearStateEstimator` (explicit `A`, no scipy) and `Daemon` ported as
-  they are, plus `PoseFilter` (`pose_filter.py`: pose only, constant velocity or acceleration).
+  they are, plus `PoseFilter` (`pose_filter.py`: pose only, constant velocity).
 - `launch/vicon_interface.launch.py` starts the node with `param/vicon_interface.param.yaml`.
 - `param/vicon_interface.param.yaml` the only configuration: tracker IP, object names, frames, offsets,
   rates, window size, state clipping, TF switch, Kalman filter and watchdog. Every number lives there.
@@ -67,7 +67,7 @@ velocity and height.
   whole rolling window, timed by the Vicon clock, rotated into the child frame. The angular velocity is
   the body rate log(R_first^T R_last) / dt across the window, so yaw at ±180° cannot spike it.
 - `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the rigid body's position and SO(3)
-  orientation with their rates (`cv`) or rates and accelerations (`ca`), only the pose measured. Per
+  orientation with their rates (constant velocity), only the pose measured. Per
   frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
   gates the frame and corrects; host time never enters `dt`. The timer only predicts to its publish
   time (at most `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
@@ -99,7 +99,7 @@ p_child = p_marker + R·d        v_child = v_marker + R·(ω × d)        ω_chi
 - **The pose filter** tracks the rigid body and moves each estimate with its own ω
   (`PoseEstimate.transported`). Vicon's orientation flicker reaches the child's position times the arm,
   0.27 mm per mrad at 0.266 m; tracking the body keeps it in the rotation channel, which can then be
-  smoothed on its own (`kf_*_noise_psd`) without slowing the translation.
+  smoothed on its own (`kf_noise_psd`) without slowing the translation.
 
 The YAML's objects today (`g1`, `box`) sit below their rigid bodies (negative z) with axes turned about
 180° in yaw, hence the yaw entries; if a rigid body is redefined, change these entries, nothing

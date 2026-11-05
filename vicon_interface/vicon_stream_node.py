@@ -92,21 +92,11 @@ class ViconStreamNode(Node):
             self.declare_parameter("publish_tf", True).get_parameter_value().bool_value
         )
         # Pose filter and watchdog behind both odometry topics; units in the param file.
-        self.kf_motion_model_ = (
-            self.declare_parameter("kf_motion_model", rclpy.Parameter.Type.STRING)
-            .get_parameter_value()
-            .string_value
-        )
-        if self.kf_motion_model_ not in ("cv", "ca"):
-            self.get_logger().fatal(
-                f"`kf_motion_model` must be \"cv\" or \"ca\"; got \"{self.kf_motion_model_}\".")
-            raise ValueError("Bad parameter `kf_motion_model`")
-        noise_psd = {m: self._read_double_array(f"kf_{m}_noise_psd", 2) for m in ("cv", "ca")}
-        self.kf_noise_psd_ = noise_psd[self.kf_motion_model_]
+        self.kf_noise_psd_ = self._read_double_array("kf_noise_psd", 2)
         self.kf_measurement_std_ = self._read_double_array("kf_measurement_std", 2)
         std_p, std_theta = self.kf_measurement_std_  # m, rad
         self.pose_covariance_ = np.diag([std_p ** 2] * 3 + [std_theta ** 2] * 3).ravel().tolist()
-        self.kf_initial_std_ = self._read_double_array("kf_initial_std", 4)
+        self.kf_initial_std_ = self._read_double_array("kf_initial_std", 2)
         self.kf_gate_ = self._read_double_array("kf_gate", 2)
         self.kf_rot_huber_k_ = self._read_double("kf_rot_huber_k")
         self.kf_max_rejections_ = (
@@ -173,7 +163,6 @@ class ViconStreamNode(Node):
                     self.rolling_window_size_,
                     offset_xyz=self.child_frame_offsets_xyz_[idx],
                     offset_R=self.child_frame_offsets_R_[idx],
-                    motion_model=self.kf_motion_model_,
                     noise_psd=self.kf_noise_psd_,
                     measurement_std=self.kf_measurement_std_,
                     initial_std=self.kf_initial_std_,

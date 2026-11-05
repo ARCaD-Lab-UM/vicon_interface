@@ -31,19 +31,18 @@
     filtered_odom_dt: 0.004 # 0.01
 
     # Pose Kalman filter behind both odometry topics (state_estimators/pose_filter.py): the rigid body's
-    # world position and SO(3) orientation, each with its rate ("cv") or rate and acceleration ("ca"),
-    # the next derivative white noise; pose-only measurement. Its estimate moves to the child frame with
-    # its own angular velocity. Stepped once per Vicon frame by the Vicon clock (frame number / frame
-    # rate); the timer only predicts the latest estimate to its publish time.
+    # world position and SO(3) orientation, each with its rate, constant up to a white acceleration;
+    # pose-only measurement. Its estimate moves to the child frame with its own angular velocity.
+    # Stepped once per Vicon frame by the Vicon clock (frame number / frame rate); the timer only
+    # predicts the latest estimate to its publish time.
     # The densities and kf_rot_huber_k were set on two g1 recordings of 2026-11-04, one at rest and one
     # moved by hand: the lowest error RMS over both and all four outputs among the settings whose velocity
     # and angular-velocity jumps stay small. Vicon's orientation flickers, so the rotation is smoothed far
-    # more than the translation; "ca" scored worse than "cv" there. What matters is density / std^2.
-    kf_motion_model: "cv"                  # "cv" constant velocity or "ca" constant acceleration
-    kf_cv_noise_psd: [0.01, 0.05625]       # white acceleration: m^2/s^3 position, rad^2/s^3 orientation
-    kf_ca_noise_psd: [10.0, 15.625]        # white jerk: m^2/s^5 position, rad^2/s^5 orientation
+    # more than the translation; a constant-acceleration model scored worse there. What matters is
+    # density / std^2.
+    kf_noise_psd: [0.01, 0.05625]          # white acceleration: m^2/s^3 position, rad^2/s^3 orientation
     kf_measurement_std: [2.0e-4, 1.0e-3]   # m, rad: the rigid body's pose noise (rescale the densities with it)
-    kf_initial_std: [1.0, 2.0, 5.0, 20.0]  # after a reset: m/s, rad/s, m/s^2, rad/s^2 ("ca" reads the last two)
+    kf_initial_std: [1.0, 2.0]             # after a reset: m/s, rad/s
     kf_gate: [0.02, 0.2]                   # m, rad: innovations above which a frame is rejected (a marker swap)
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter
     kf_rot_huber_k: 2.0                    # sigma above which a rotation residual weighs k / distance; 0 off

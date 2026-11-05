@@ -12,12 +12,12 @@ class ViconDataFilter(ViconDataBuffer):
     """Rolling buffer, a pose Kalman filter on the Vicon clock and a watchdog (see AGENTS.md)."""
 
     def __init__(self, state_dim, rolling_window_size, offset_xyz=None, offset_R=None, *,
-                 motion_model, noise_psd, measurement_std, initial_std, gate, max_rejections,
-                 max_delay, clock_window, offline_timeout, online_jitter_time, rot_huber_k=0.0,
+                 noise_psd, measurement_std, initial_std, gate, max_rejections, max_delay,
+                 clock_window, offline_timeout, online_jitter_time, rot_huber_k=0.0,
                  owner_id=None):
         super().__init__(state_dim, rolling_window_size, offset_xyz, offset_R)
-        self.kf_ = PoseFilter(motion_model, noise_psd, measurement_std, initial_std, gate,
-                              max_rejections, offline_timeout, rot_huber_k)
+        self.kf_ = PoseFilter(noise_psd, measurement_std, initial_std, gate, max_rejections,
+                              offline_timeout, rot_huber_k)
         self.daemon_ = Daemon(DaemonConfig(
             set_online_jitter_time_ms=1000.0 * online_jitter_time,
             set_offline_time_ms=1000.0 * offline_timeout,

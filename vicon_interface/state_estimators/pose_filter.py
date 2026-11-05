@@ -1,16 +1,14 @@
 """Kalman filter of a Vicon rigid body's pose, without an IMU.
 
 Position lives in the world frame, orientation on SO(3) with its error in the body frame,
-R = R_hat exp([d]x). Each axis carries its value and one derivative ('cv') or two ('ca'); the
-next derivative is white noise of a given spectral density, so the process noise follows the
-true frame interval. Only the pose is measured.
+R = R_hat exp([d]x). Each axis carries its value and its rate, constant up to a white
+acceleration of a given spectral density, so the process noise follows the true frame interval.
+Only the pose is measured.
 """
 from dataclasses import dataclass
 import math
 
 import numpy as np
-
-ORDERS = {'cv': 2, 'ca': 3}  # states per axis: value, velocity[, acceleration]
 
 
 def skew(w):
@@ -56,20 +54,13 @@ def so3_right_jacobian(phi):
             + ((theta - math.sin(theta)) / (theta2 * theta)) * (K @ K))
 
 
-def kinematic_blocks(order, dt):
-    """Return (F, Q) of one axis over dt (s): its value and order - 1 derivatives.
+def kinematic_blocks(dt):
+    """Return (F, Q) of one axis over dt (s): its value and its rate.
 
-    The next derivative is white noise of unit spectral density, so
-    Q[i, j] = dt^n / (n (order - 1 - i)! (order - 1 - j)!) with n = 2 order - 1 - i - j.
+    The rate's derivative is white noise of unit spectral density.
     """
-    F = np.zeros((order, order))
-    Q = np.zeros((order, order))
-    for i in range(order):
-        for j in range(order):
-            if j >= i:
-                F[i, j] = dt ** (j - i) / math.factorial(j - i)
-            n = 2 * order - 1 - i - j
-            Q[i, j] = dt ** n / (n * math.factorial(order - 1 - i) * math.factorial(order - 1 - j))
+    F = np.array([[1.0, dt], [0.0, 1.0]])
+    Q = np.array([[dt ** 3 / 3.0, dt ** 2 / 2.0], [dt ** 2 / 2.0, dt]])
     return F, Q
 
 
@@ -93,46 +84,36 @@ class PoseEstimate:
     t: float  # s, Vicon time
     p: np.ndarray  # m, world
     v: np.ndarray  # m/s, world
-    a: np.ndarray  # m/s^2, world; for 'cv' zero, or a transported frame's lever-arm term
     R: np.ndarray  # world from body
     w: np.ndarray  # rad/s, body
-    alpha: np.ndarray  # rad/s^2, body; zero for 'cv'
-    P_trans: np.ndarray  # covariance of (p, v[, a])
-    P_rot: np.ndarray  # covariance of (d, w[, alpha]), d the body-frame error of R
-    P_cross: np.ndarray = None  # covariance of (p, v[, a]) with (d, w[, alpha]); None is zero
+    P_trans: np.ndarray  # covariance of (p, v)
+    P_rot: np.ndarray  # covariance of (d, w), d the body-frame error of R
+    P_cross: np.ndarray = None  # covariance of (p, v) with (d, w); None is zero
 
     def transported(self, offset_xyz, offset_R):
-        """Return the estimate of a frame fixed on the body: origin offset_xyz (m, body frame),
-        orientation offset_R (body from frame).
+        """Return the estimate of a frame fixed on the body.
 
-        The rigid-body formulas move the state: p + R d, v + R (w x d), a + R (alpha x d +
-        w x (w x d)), R offset_R, offset_R^T w and offset_R^T alpha. Their first-order map moves
-        the covariance, so the new frame's translation and rotation errors are correlated.
+        The frame's origin is offset_xyz (m, body frame), its orientation offset_R (body from
+        frame). The rigid-body formulas move the state: p + R d, v + R (w x d), R offset_R and
+        offset_R^T w. Their first-order map moves the covariance, so the new frame's translation
+        and rotation errors are correlated.
         """
         d = np.asarray(offset_xyz, dtype=float)
-        R, w, alpha = self.R, self.w, self.alpha
+        R, w = self.R, self.w
         wd = np.cross(w, d)
-        c = np.cross(alpha, d) + np.cross(w, wd)
-        n = self.P_trans.shape[0]  # 6 for 'cv', 9 for 'ca'
-        Sigma = np.zeros((2 * n, 2 * n))
-        Sigma[:n, :n], Sigma[n:, n:] = self.P_trans, self.P_rot
+        Sigma = np.zeros((12, 12))
+        Sigma[:6, :6], Sigma[6:, 6:] = self.P_trans, self.P_rot
         if self.P_cross is not None:
-            Sigma[:n, n:], Sigma[n:, :n] = self.P_cross, self.P_cross.T
-        J = np.zeros((2 * n, 2 * n))  # errors of the new frame on the body's, rows on columns
-        J[:n, :n] = np.eye(n)
-        J[0:3, n:n + 3] = -R @ skew(d)  # R exp(d theta) d = R d - R [d]x d theta
-        J[3:6, n:n + 3] = -R @ skew(wd)
-        J[3:6, n + 3:n + 6] = -R @ skew(d)
-        if n == 9:
-            J[6:9, n:n + 3] = -R @ skew(c)
-            J[6:9, n + 3:n + 6] = -R @ (skew(wd) + skew(w) @ skew(d))
-            J[6:9, n + 6:n + 9] = -R @ skew(d)
-        J[n:, n:] = np.kron(np.eye(n // 3), offset_R.T)
+            Sigma[:6, 6:], Sigma[6:, :6] = self.P_cross, self.P_cross.T
+        J = np.eye(12)  # errors of the new frame on the body's, rows on columns
+        J[0:3, 6:9] = -R @ skew(d)  # R exp(d theta) d = R d - R [d]x d theta
+        J[3:6, 6:9] = -R @ skew(wd)
+        J[3:6, 9:12] = -R @ skew(d)
+        J[6:9, 6:9] = J[9:12, 9:12] = offset_R.T
         P = J @ Sigma @ J.T
         return PoseEstimate(
-            t=self.t, p=self.p + R @ d, v=self.v + R @ wd, a=self.a + R @ c, R=R @ offset_R,
-            w=offset_R.T @ w, alpha=offset_R.T @ alpha, P_trans=P[:n, :n], P_rot=P[n:, n:],
-            P_cross=P[:n, n:])
+            t=self.t, p=self.p + R @ d, v=self.v + R @ wd, R=R @ offset_R, w=offset_R.T @ w,
+            P_trans=P[:6, :6], P_rot=P[6:, 6:], P_cross=P[:6, 6:])
 
     def odometry_covariances(self):
         """Return the (pose, twist) 6x6 covariances in nav_msgs/Odometry's conventions.
@@ -156,17 +137,16 @@ class PoseEstimate:
 
 
 class PoseFilter:
-    """Pose-only Kalman filter of one rigid body, with the 'cv' or 'ca' model described above."""
+    """Pose-only Kalman filter of one rigid body, with the constant-velocity model above."""
 
-    def __init__(self, model, noise_psd, measurement_std, initial_std, gate, max_rejections,
-                 reset_gap, rot_huber_k=0.0):
+    def __init__(self, noise_psd, measurement_std, initial_std, gate, max_rejections, reset_gap,
+                 rot_huber_k=0.0):
         """Build the filter.
 
-        noise_psd: spectral densities of the white derivative, translation then rotation:
-            m^2/s^3 and rad^2/s^3 for 'cv', m^2/s^5 and rad^2/s^5 for 'ca'.
+        noise_psd: spectral densities of the white acceleration, m^2/s^3 for the translation and
+            rad^2/s^3 for the rotation.
         measurement_std: position (m) and orientation (rad).
-        initial_std: velocity (m/s), angular velocity (rad/s), acceleration (m/s^2) and angular
-            acceleration (rad/s^2) after a reset; 'ca' alone reads the last two.
+        initial_std: velocity (m/s) and angular velocity (rad/s) after a reset.
         gate: position (m) and rotation (rad) innovations above which a frame is rejected, as a
             marker swap or a flipped fit; motion, however sharp, stays well below them.
         max_rejections: rejected frames in a row that reset the filter.
@@ -174,26 +154,21 @@ class PoseFilter:
         rot_huber_k: Mahalanobis distance above which a rotation residual's measurement variance
             grows by distance / rot_huber_k (a Huber weight), so a glitch pulls less; 0 is off.
         """
-        if model not in ORDERS:
-            raise ValueError(f'PoseFilter: model must be one of {sorted(ORDERS)}, got {model!r}')
-        if len(noise_psd) != 2 or len(measurement_std) != 2 or len(initial_std) != 4:
+        if len(noise_psd) != 2 or len(measurement_std) != 2 or len(initial_std) != 2:
             raise ValueError(
-                'PoseFilter: noise_psd and measurement_std take 2 entries, initial_std 4')
+                'PoseFilter: noise_psd, measurement_std and initial_std take 2 entries each')
         if min(noise_psd) < 0.0 or min(measurement_std) <= 0.0 or min(initial_std) <= 0.0:
             raise ValueError(
                 'PoseFilter: noise_psd must be >= 0, measurement_std and initial_std > 0')
         if len(gate) != 2 or min(gate) <= 0.0 or rot_huber_k < 0.0:
             raise ValueError('PoseFilter: gate takes 2 entries > 0, rot_huber_k must be >= 0')
-        self.order_ = ORDERS[model]
         self.q_trans_, self.q_rot_ = (float(q) for q in noise_psd)
         std_p, std_theta = (float(s) for s in measurement_std)
-        std_v, std_w, std_a, std_alpha = (float(s) for s in initial_std)
+        std_v, std_w = (float(s) for s in initial_std)
         self.R_trans_ = std_p ** 2 * np.eye(3)  # m^2
         self.R_rot_ = std_theta ** 2 * np.eye(3)  # rad^2
-        trans = np.square([std_p, std_v, std_a][:self.order_])
-        rot = np.square([std_theta, std_w, std_alpha][:self.order_])
-        self.P0_trans_ = np.diag(np.repeat(trans, 3))
-        self.P0_rot_ = np.diag(np.repeat(rot, 3))
+        self.P0_trans_ = np.diag(np.repeat(np.square([std_p, std_v]), 3))
+        self.P0_rot_ = np.diag(np.repeat(np.square([std_theta, std_w]), 3))
         self.gate_position_, self.gate_rotation_ = (float(g) for g in gate)  # m, rad
         self.rot_huber_k_ = float(rot_huber_k)
         self.max_rejections_ = int(max_rejections)
@@ -201,10 +176,10 @@ class PoseFilter:
         self.initialized_ = False
         self.rejections_ = 0  # rejected frames in a row
         self.t_ = 0.0
-        self.x_ = np.zeros(3 * self.order_)  # p, v[, a]: world
+        self.x_ = np.zeros(6)  # p, v: world
         self.P_trans_ = self.P0_trans_.copy()
         self.R_ = np.eye(3)  # world from body
-        self.rates_ = np.zeros(3 * self.order_ - 3)  # w[, alpha]: body
+        self.w_ = np.zeros(3)  # rad/s, body
         self.P_rot_ = self.P0_rot_.copy()
 
     @property
@@ -214,11 +189,11 @@ class PoseFilter:
     def reset(self, t, p, R):
         """Restart at rest at time t (s) from the pose p (m, world) and R (world from body)."""
         self.t_ = float(t)
-        self.x_ = np.zeros(3 * self.order_)
+        self.x_ = np.zeros(6)
         self.x_[:3] = p
         self.P_trans_ = self.P0_trans_.copy()
         self.R_ = np.array(R, dtype=float)
-        self.rates_ = np.zeros(3 * self.order_ - 3)
+        self.w_ = np.zeros(3)
         self.P_rot_ = self.P0_rot_.copy()
         self.rejections_ = 0
         self.initialized_ = True
@@ -234,7 +209,7 @@ class PoseFilter:
             return 'reset'
         if t <= self.t_:
             return 'stale'
-        x, P_trans, R_pred, rates, P_rot = self._propagate(t - self.t_)
+        x, P_trans, R_pred, w, P_rot = self._propagate(t - self.t_)
         r_trans = np.asarray(p, dtype=float) - x[:3]  # m, world
         r_rot = so3_log(R_pred.T @ np.asarray(R, dtype=float))  # rad, body
         self.t_ = float(t)
@@ -245,7 +220,7 @@ class PoseFilter:
                 self.reset(t, p, R)
                 return 'reset'
             self.x_, self.P_trans_, self.R_ = x, P_trans, R_pred
-            self.rates_, self.P_rot_ = rates, P_rot
+            self.w_, self.P_rot_ = w, P_rot
             return 'rejected'
         self.rejections_ = 0
         dx, self.P_trans_ = _correct(P_trans, r_trans, self.R_trans_)
@@ -257,12 +232,12 @@ class PoseFilter:
                 R_rot = R_rot * (distance / self.rot_huber_k_)  # weight k / distance
         dx, self.P_rot_ = _correct(P_rot, r_rot, R_rot)
         self.R_ = R_pred @ so3_exp(dx[:3])
-        self.rates_ = rates + dx[3:]
+        self.w_ = w + dx[3:]
         return 'accepted'
 
     def state(self):
         """Return the current estimate as a PoseEstimate of copies."""
-        return self._estimate(self.t_, self.x_, self.P_trans_, self.R_, self.rates_, self.P_rot_)
+        return self._estimate(self.t_, self.x_, self.P_trans_, self.R_, self.w_, self.P_rot_)
 
     def predicted(self, t):
         """Return the estimate moved by the model to time t (s), never back; the filter is kept."""
@@ -270,23 +245,19 @@ class PoseFilter:
         return self._estimate(self.t_ + dt, *self._propagate(dt))
 
     def _propagate(self, dt):
-        """Return (x, P_trans, R, rates, P_rot): the current estimate moved forward by dt (s)."""
-        F1, Q1 = kinematic_blocks(self.order_, dt)
+        """Return (x, P_trans, R, w, P_rot): the current estimate moved forward by dt (s)."""
+        F1, Q1 = kinematic_blocks(dt)
         F = np.kron(F1, np.eye(3))
         Q = np.kron(Q1, np.eye(3))
         x = F @ self.x_
         P_trans = F @ self.P_trans_ @ F.T + self.q_trans_ * Q
-        rates = F[3:, 3:] @ self.rates_  # w (+ alpha dt)[, alpha]
-        phi = F[:3, 3:] @ self.rates_  # rad, body: w dt (+ alpha dt^2 / 2)
+        phi = dt * self.w_  # rad, body
         F[:3, :3] = so3_exp(phi).T
-        F[:3, 3:] = so3_right_jacobian(phi) @ F[:3, 3:]
+        F[:3, 3:] = dt * so3_right_jacobian(phi)
         P_rot = F @ self.P_rot_ @ F.T + self.q_rot_ * Q
-        return x, P_trans, self.R_ @ so3_exp(phi), rates, P_rot
+        return x, P_trans, self.R_ @ so3_exp(phi), self.w_.copy(), P_rot
 
-    def _estimate(self, t, x, P_trans, R, rates, P_rot):
-        zero = np.zeros(3)
-        ca = self.order_ == 3
+    def _estimate(self, t, x, P_trans, R, w, P_rot):
         return PoseEstimate(
-            t=float(t), p=x[:3].copy(), v=x[3:6].copy(), a=x[6:9].copy() if ca else zero.copy(),
-            R=R.copy(), w=rates[:3].copy(), alpha=rates[3:6].copy() if ca else zero.copy(),
+            t=float(t), p=x[:3].copy(), v=x[3:6].copy(), R=R.copy(), w=w.copy(),
             P_trans=P_trans.copy(), P_rot=P_rot.copy())

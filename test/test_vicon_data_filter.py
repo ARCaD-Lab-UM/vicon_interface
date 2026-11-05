@@ -13,10 +13,9 @@ DT = 0.004  # Vicon frame interval and timer period, s
 RATE = 1.0 / DT  # Hz, the frame rate the SDK reports
 WINDOW = 5
 PARAMS = {
-    'motion_model': 'cv',
     'noise_psd': (0.036, 0.9),
     'measurement_std': (2e-4, 1e-3),
-    'initial_std': (1.0, 2.0, 5.0, 20.0),
+    'initial_std': (1.0, 2.0),
     'gate': (0.02, 0.2),
     'max_rejections': 5,
     'max_delay': 0.02,
@@ -25,8 +24,6 @@ PARAMS = {
     'online_jitter_time': 0.0,
     'owner_id': 'test',
 }
-CA = {'motion_model': 'ca', 'noise_psd': (10.0, 250.0)}  # the param file's "ca" densities
-MODELS = pytest.mark.parametrize('model', [{}, CA], ids=['cv', 'ca'])
 
 
 class FakeClock:
@@ -100,27 +97,14 @@ def test_startup_waits_for_a_full_window_then_publishes(clock):
     assert not np.any(f.kf_.state().p == 99.0) and not np.any(f.kf_.state().v == 99.0)
 
 
-@MODELS
-def test_constant_velocity_is_tracked_exactly(clock, model):
-    f = make_filter(**model)
+def test_constant_velocity_is_tracked_exactly(clock):
+    f = make_filter()
     v = np.array([0.3, -0.1, 0.05])
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.1, -0.2, 0.5))
     est = filtered(f)
     assert np.allclose(est.v, v, atol=1e-4)
     assert np.allclose(est.p, v * 199 * DT, atol=1e-5)
-
-
-def test_constant_acceleration_is_tracked_without_lag_by_ca(clock):
-    f = make_filter(**CA)
-    v0 = np.array([0.2, 0.0, -0.1])
-    acc = np.array([0.5, -1.0, 2.0])
-    for k in range(300):
-        t = k * DT
-        feed(f, clock, k, v0 * t + 0.5 * acc * t * t, (0.0, 0.0, 0.0))
-    t = 299 * DT
-    assert np.allclose(filtered(f).v, v0 + acc * t, atol=1e-4)  # "cv" lags here by ~11 ms
-    assert np.allclose(f.kf_.state().a, acc, atol=1e-2)
 
 
 def test_latency_is_compensated_by_predicting_to_now(clock):
@@ -150,11 +134,10 @@ def test_the_prediction_to_now_is_capped_at_max_delay(clock):
     assert np.array_equal(f.kf_.R_trans_, std_p ** 2 * np.eye(3))  # R is never rescaled
 
 
-@MODELS
-def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock, model):
+def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock):
     """The SDK drops frames and the host picks them up late; the Vicon clock keeps dt exact."""
     rng = np.random.default_rng(2)
-    f = make_filter(**model)
+    f = make_filter()
     raw = ViconDataBuffer(6, WINDOW)
     v = np.array([0.5, 0.2, 0.0])
     err_kf, err_fd = [], []
@@ -196,11 +179,9 @@ def test_the_finite_difference_is_timed_by_the_frame_clock(clock):
     assert np.allclose(f.get_latest_velocity()[0], v, atol=1e-9)
 
 
-@pytest.mark.parametrize('model, rms_max, fd_ratio', [({}, 0.05, 1.5), (CA, 0.02, 1.0)],
-                         ids=['cv', 'ca'])
-def test_sinusoid_velocity_error_is_small(clock, model, rms_max, fd_ratio):
-    """1 and 2 Hz sinusoids: "cv" lags about as much as the 5-frame difference, "ca" less."""
-    f = make_filter(**model)
+def test_sinusoid_velocity_error_is_small(clock):
+    """1 and 2 Hz sinusoids: the filter lags about as much as the 5-frame difference."""
+    f = make_filter()
     err_kf, err_fd = [], []
     for k in range(500):
         t = k * DT
@@ -215,13 +196,12 @@ def test_sinusoid_velocity_error_is_small(clock, model, rms_max, fd_ratio):
     rms_kf = np.sqrt(np.mean(np.square(err_kf)))
     rms_fd = np.sqrt(np.mean(np.square(err_fd)))
     print(f'sinusoid velocity RMS error: kf {rms_kf:.4f} m/s, finite difference {rms_fd:.4f} m/s')
-    assert rms_kf < rms_max
-    assert rms_kf <= fd_ratio * rms_fd
+    assert rms_kf < 0.05
+    assert rms_kf <= 1.5 * rms_fd
 
 
-@MODELS
-def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(clock, model):
-    f = make_filter(**model)
+def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(clock):
+    f = make_filter()
     rng = np.random.default_rng(0)
     v_kf, v_fd = [], []
     for k in range(2000):
@@ -236,9 +216,8 @@ def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(c
     assert np.all(std_kf < std_fd)
 
 
-@MODELS
-def test_yaw_wrap_does_not_disturb_the_filtered_estimate(clock, model):
-    f = make_filter(**model)
+def test_yaw_wrap_does_not_disturb_the_filtered_estimate(clock):
+    f = make_filter()
     v = np.array([0.3, 0.0, 0.0])
     rate = 2.0  # rad/s; yaw passes +pi at t = 0.6 s, frame 150, once the start has settled
     for k in range(250):
@@ -250,9 +229,8 @@ def test_yaw_wrap_does_not_disturb_the_filtered_estimate(clock, model):
             assert np.allclose(est.w, [0.0, 0.0, rate], atol=1e-6)
 
 
-@MODELS
-def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(clock, model):
-    f = make_filter(**model)
+def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(clock):
+    f = make_filter()
     w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis
     heading = so3_exp(np.array([0.0, 0.0, np.pi / 2]))
     for k in range(250):
@@ -262,11 +240,10 @@ def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(
     assert np.allclose(est.w, w_body, atol=1e-5)  # the Euler-rate twist reads [0, -1, 0] here
 
 
-@MODELS
-def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock, model):
+def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock):
     offset_xyz = np.array([0.0, 0.0, -0.266])  # m, g1 below its rigid body, turned in yaw
     offset_R = so3_exp(np.array([0.0, 0.0, np.pi]))
-    f = make_filter(offset_xyz=offset_xyz, offset_R=offset_R, **model)
+    f = make_filter(offset_xyz=offset_xyz, offset_R=offset_R)
     v = np.array([0.3, -0.1, 0.05])  # m/s, the rigid body's origin
     w = np.array([0.4, -0.3, 1.2])  # rad/s, body
     R0 = so3_exp(np.array([0.1, 0.2, -0.5]))
@@ -294,9 +271,8 @@ def test_the_finite_difference_reports_the_body_angular_velocity(clock):
             assert np.allclose(f.get_latest_velocity()[1], [0.0, 0.0, rate], atol=1e-9)
 
 
-@MODELS
-def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock, model):
-    f = make_filter(**model)
+def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock):
+    f = make_filter()
     v = np.array([0.3, -0.1, 0.05])
     for k in range(200):
         glitch = np.array([0.05, 0.0, 0.0]) if k == 150 else 0.0  # m, one swapped marker
