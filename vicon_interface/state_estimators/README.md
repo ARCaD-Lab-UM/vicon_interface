@@ -13,7 +13,7 @@ This page gives the model, where each equation lives in the code, what changed f
 ## Summary
 
 - One constant-velocity Kalman filter per object tracks the rigid body that Vicon reports: position
-  and velocity in the world, orientation on SO(3) and angular velocity in the body frame. Only the
+  and velocity in the world, orientation on $SO(3)$ and angular velocity in the rigid body's frame. Only the
   pose is measured. Both velocities are estimated.
 - It steps once per Vicon frame, on the Vicon frame clock, with the exact process noise of that
   step. Host timing reaches only the stamps, and a running minimum removes it there.
@@ -44,61 +44,77 @@ showed why:
 
 ## Model
 
+Three frames appear: the world $\mathcal W$, the rigid body $\mathcal M$ that Vicon tracks, and
+base_link $\mathcal B$, the published child frame. A left superscript names the frame a vector is
+written in; positions and velocities without one are in $\mathcal W$. ${}^{\mathcal W}\mathbf R_{\mathcal M}$
+maps $\mathcal M$ coordinates to $\mathcal W$ coordinates, and
+${}^{\mathcal M}\mathbf R_{\mathcal W} = ({}^{\mathcal W}\mathbf R_{\mathcal M})^\top$. A tilde marks a
+measurement, a hat an estimate, and the superscripts $-$ and $+$ the prior and the posterior at a
+step. A bold $\mathbf R$ whose index names no frame, such as $\mathbf R_p$, is a measurement-noise
+covariance.
+
 ### State
 
 ```math
-p,\ v \in \mathbb{R}^3\ \text{(world)},\qquad R \in SO(3)\ \text{(world from body)},\qquad
-\omega \in \mathbb{R}^3\ \text{(body)}
+\mathbf p_m,\ \mathbf v_m \in \mathbb R^3,\qquad {}^{\mathcal W}\mathbf R_{\mathcal M} \in SO(3),\qquad
+{}^{\mathcal M}\boldsymbol\omega \in \mathbb R^3
 ```
 
-The filter tracks the rigid body itself, not base_link. The orientation error is taken in the body
-frame, $R = \hat R\,\mathrm{Exp}(\delta\theta)$. The state splits into two blocks with their own
-covariances: the translation $(p, v)$ with $P_t$ and the rotation $(\delta\theta, \omega)$ with $P_r$.
-Their dynamics and noises do not interact, so the blocks stay uncorrelated inside the filter. They
-correlate only once the estimate is moved to base_link.
+The filter tracks the rigid body itself, not base_link. The orientation error is taken in $\mathcal M$,
+${}^{\mathcal W}\mathbf R_{\mathcal M} = {}^{\mathcal W}\hat{\mathbf R}_{\mathcal M}\operatorname{Exp}(\delta\boldsymbol\theta)$. The state splits into two
+blocks with their own covariances: the translation $(\mathbf p_m, \mathbf v_m)$ with
+$\mathbf P_{\mathrm{trans}}$ and the rotation $(\delta\boldsymbol\theta, {}^{\mathcal M}\boldsymbol\omega)$ with
+$\mathbf P_{\mathrm{rot}}$. Their dynamics and noises do not interact, so the blocks stay uncorrelated
+inside the filter. They correlate only once the estimate is moved to base_link.
 
 ### Process model
 
 Constant velocity, driven by white acceleration:
 
 ```math
-\dot p = v,\qquad \dot v = a,\qquad \mathbb{E}\big[a(t)\,a(s)^\top\big] = q_t\,I\,\delta(t-s)
+\dot{\mathbf p}_m = \mathbf v_m,\qquad \dot{\mathbf v}_m = \mathbf n_a,\qquad
+\mathbb E\big[\mathbf n_a(t)\,\mathbf n_a(s)^\top\big] = \sigma_a^2\,\mathbb I_3\,\delta(t-s)
 ```
 
 ```math
-\dot R = R\,[\omega]_\times,\qquad \dot\omega = \alpha,\qquad
-\mathbb{E}\big[\alpha(t)\,\alpha(s)^\top\big] = q_r\,I\,\delta(t-s)
+{}^{\mathcal W}\dot{\mathbf R}_{\mathcal M} = {}^{\mathcal W}\mathbf R_{\mathcal M}\,[{}^{\mathcal M}\boldsymbol\omega]_\times,\qquad
+{}^{\mathcal M}\dot{\boldsymbol\omega} = \mathbf n_\alpha,\qquad
+\mathbb E\big[\mathbf n_\alpha(t)\,\mathbf n_\alpha(s)^\top\big] = \sigma_\alpha^2\,\mathbb I_3\,\delta(t-s)
 ```
 
-$q_t$ and $q_r$ are `kf_noise_psd`. Over one step $\Delta t$ the translation is discretized exactly:
+$\sigma_a^2$ and $\sigma_\alpha^2$ are `kf_noise_psd`. Over one step $\delta t$ the translation is discretized
+exactly:
 
 ```math
-\begin{bmatrix} p \\ v \end{bmatrix}_{k+1} = F \begin{bmatrix} p \\ v \end{bmatrix}_{k} + w_k,\qquad
-F = \begin{bmatrix} I & \Delta t\,I \\ 0 & I \end{bmatrix},\qquad
-Q_t = q_t \begin{bmatrix} \tfrac{1}{3}\Delta t^3\,I & \tfrac{1}{2}\Delta t^2\,I \\
-\tfrac{1}{2}\Delta t^2\,I & \Delta t\,I \end{bmatrix}
+\begin{bmatrix} \mathbf p_m \\ \mathbf v_m \end{bmatrix}_{k+1} =
+\mathbf F_k \begin{bmatrix} \mathbf p_m \\ \mathbf v_m \end{bmatrix}_{k} + \mathbf w_k,\qquad
+\mathbf F_k = \begin{bmatrix} \mathbb I_3 & \delta t\,\mathbb I_3 \\ \mathbf 0 & \mathbb I_3 \end{bmatrix},\qquad
+\mathbf Q_{\mathrm{trans},k} = \sigma_a^2 \begin{bmatrix} \tfrac{1}{3}\delta t^3\,\mathbb I_3 & \tfrac{1}{2}\delta t^2\,\mathbb I_3 \\
+\tfrac{1}{2}\delta t^2\,\mathbb I_3 & \delta t\,\mathbb I_3 \end{bmatrix}
 ```
 
-$Q_t$ integrates the noise exactly, so two steps of $\Delta t/2$ equal one step of $\Delta t$: a
-dropped frame is just a longer step.
+$\mathbf Q_{\mathrm{trans},k}$ integrates the noise exactly, so two steps of $\delta t/2$ equal one step of
+$\delta t$: a dropped frame is just a longer step.
 
 The rotation moves its mean along the exponential map and its error to first order:
 
 ```math
-\hat R_{k+1} = \hat R_k\,\mathrm{Exp}(\phi),\qquad \hat\omega_{k+1} = \hat\omega_k,\qquad
-\phi = \hat\omega_k\,\Delta t
+{}^{\mathcal W}\hat{\mathbf R}_{\mathcal M_{k+1}}^- = {}^{\mathcal W}\hat{\mathbf R}_{\mathcal M_k}^+\operatorname{Exp}(\boldsymbol\phi),\qquad
+{}^{\mathcal M}\hat{\boldsymbol\omega}_{k+1}^- = {}^{\mathcal M}\hat{\boldsymbol\omega}_k^+,\qquad
+\boldsymbol\phi = {}^{\mathcal M}\hat{\boldsymbol\omega}_k^+\,\delta t
 ```
 
 ```math
-\begin{bmatrix} \delta\theta \\ \delta\omega \end{bmatrix}_{k+1} =
-\begin{bmatrix} \mathrm{Exp}(\phi)^\top & \Delta t\,J_r(\phi) \\ 0 & I \end{bmatrix}
-\begin{bmatrix} \delta\theta \\ \delta\omega \end{bmatrix}_{k} + w_k
+\begin{bmatrix} \delta\boldsymbol\theta \\ \delta\boldsymbol\omega \end{bmatrix}_{k+1} =
+\begin{bmatrix} \operatorname{Exp}(\boldsymbol\phi)^\top & \delta t\,\mathbf J_r(\boldsymbol\phi) \\ \mathbf 0 & \mathbb I_3 \end{bmatrix}
+\begin{bmatrix} \delta\boldsymbol\theta \\ \delta\boldsymbol\omega \end{bmatrix}_{k} + \mathbf w_k
 ```
 
-$J_r$ is the right Jacobian of SO(3). The rotation's $Q_r$ is $Q_t$ with $q_r$ in place of $q_t$; it
-ignores how far the body turns within one 4 ms frame.
+$\mathbf J_r$ is the right Jacobian of $SO(3)$. The rotation's $\mathbf Q_{\mathrm{rot},k}$ is
+$\mathbf Q_{\mathrm{trans},k}$ with $\sigma_\alpha^2$ in place of $\sigma_a^2$; it ignores how far $\mathcal M$ turns
+within one 4 ms frame.
 
-$\Delta t$ always comes from the Vicon frame clock, $\Delta t = (n_k - n_{k-1})/f$, with the frame
+$\delta t$ always comes from the Vicon frame clock, $\delta t = (n_k - n_{k-1})/f$, with the frame
 number $n$ and the frame rate $f$ from the SDK. Host time never enters it.
 
 ### Measurement model
@@ -106,87 +122,100 @@ number $n$ and the frame rate $f$ from the SDK. Host time never enters it.
 Each frame measures the rigid body's pose:
 
 ```math
-z_p = p + n_p,\quad n_p \sim \mathcal{N}(0,\ \sigma_p^2 I),\qquad
-Z_R = R\,\mathrm{Exp}(n_\theta),\quad n_\theta \sim \mathcal{N}(0,\ \sigma_\theta^2 I)
+\tilde{\mathbf p}_m = \mathbf p_m + \mathbf n_p,\quad \mathbf n_p \sim \mathcal N(\mathbf 0,\ \mathbf R_p),\qquad
+{}^{\mathcal W}\tilde{\mathbf R}_{\mathcal M} = {}^{\mathcal W}\mathbf R_{\mathcal M}\operatorname{Exp}(\mathbf n_\theta),\quad
+\mathbf n_\theta \sim \mathcal N(\mathbf 0,\ \mathbf R_\theta)
 ```
 
-$\sigma_p$ and $\sigma_\theta$ are `kf_measurement_std`. Against the prediction $\hat p^-$, $\hat R^-$
-the residuals are
+$\mathbf R_p = \sigma_p^2\,\mathbb I_3$ and $\mathbf R_\theta = \sigma_\theta^2\,\mathbb I_3$, with $\sigma_p$ and $\sigma_\theta$ from
+`kf_measurement_std`. Against the prediction $\hat{\mathbf p}_m^-$, ${}^{\mathcal W}\hat{\mathbf R}_{\mathcal M}^-$ the
+innovations are
 
 ```math
-r_p = z_p - \hat p^-,\qquad
-r_\theta = \mathrm{Log}\big((\hat R^-)^\top Z_R\big) \approx \delta\theta + n_\theta
+\boldsymbol\nu_p = \tilde{\mathbf p}_m - \hat{\mathbf p}_m^-,\qquad
+\boldsymbol\nu_\theta = \operatorname{Log}\big(({}^{\mathcal W}\hat{\mathbf R}_{\mathcal M}^-)^\top\,{}^{\mathcal W}\tilde{\mathbf R}_{\mathcal M}\big) \approx \delta\boldsymbol\theta + \mathbf n_\theta
 ```
 
-so each block observes its first three states, $H = [\,I\ \ 0\,]$. Velocity and angular velocity are
+so each block observes its first three states, $\mathbf H = [\,\mathbb I_3\ \ \mathbf 0\,]$. Velocity and angular velocity are
 never measured; the model infers them from successive poses.
 
 ### Update and the rules around it
 
-Each block takes the Kalman update in Joseph form:
+Each block takes the Kalman update in Joseph form, with $\boldsymbol\nu$ and $\mathbf R_\nu$ its innovation
+and noise covariance ($\boldsymbol\nu_p$ and $\mathbf R_p$, or $\boldsymbol\nu_\theta$ and $\mathbf R_\theta$):
 
 ```math
-S = H P^- H^\top + R_m,\qquad K = P^- H^\top S^{-1},\qquad \Delta = K\,r,\qquad
-P^+ = (I - KH)\,P^-\,(I - KH)^\top + K R_m K^\top
+\mathbf S_k = \mathbf H\mathbf P_k^-\mathbf H^\top + \mathbf R_\nu,\qquad
+\mathbf K_k = \mathbf P_k^-\mathbf H^\top\mathbf S_k^{-1},\qquad
+\delta\hat{\mathbf x}_k = \mathbf K_k\boldsymbol\nu,\qquad
+\mathbf P_k^+ = (\mathbb I - \mathbf K_k\mathbf H)\,\mathbf P_k^-\,(\mathbb I - \mathbf K_k\mathbf H)^\top + \mathbf K_k\mathbf R_\nu\mathbf K_k^\top
 ```
 
-The translation adds $\Delta$. The rotation injects it:
-$\hat R^+ = \hat R^-\,\mathrm{Exp}(\Delta_\theta)$ and $\hat\omega^+ = \hat\omega^- + \Delta_\omega$.
+The translation adds $\delta\hat{\mathbf x}_k$. The rotation injects it:
+${}^{\mathcal W}\hat{\mathbf R}_{\mathcal M}^+ = {}^{\mathcal W}\hat{\mathbf R}_{\mathcal M}^-\operatorname{Exp}(\delta\hat{\boldsymbol\theta}_k)$ and
+${}^{\mathcal M}\hat{\boldsymbol\omega}^+ = {}^{\mathcal M}\hat{\boldsymbol\omega}^- + \delta\hat{\boldsymbol\omega}_k$.
 
-- **Gate.** A frame with $\lVert r_p \rVert > g_p$ or $\lVert r_\theta \rVert > g_\theta$ (`kf_gate`,
+- **Gate.** A frame with $\lVert\boldsymbol\nu_p\rVert > g_p$ or $\lVert\boldsymbol\nu_\theta\rVert > g_\theta$ (`kf_gate`,
   in metres and radians) is a marker swap or a flipped fit. The filter keeps its prediction and
-  skips the frame. After `kf_max_rejections` in a row it restarts at the measurement, since the body
-  really moved. Motion stays far below both thresholds.
+  skips the frame. After `kf_max_rejections` in a row it restarts at the measurement, since the rigid
+  body really moved. Motion stays far below both thresholds.
 - **Huber weight on the rotation.** With the Mahalanobis distance
-  $d = \sqrt{r_\theta^\top S^{-1} r_\theta}$, a residual with $d > k$ (`kf_rot_huber_k`) is fused with
-  $R_m$ scaled by $d/k$. An orientation spike then pulls the estimate less. Below $k$ the update is
-  the plain one.
-- **Restart.** The filter starts at the measured pose, at rest ($v = \omega = 0$), with its
-  covariance from $\sigma_p$, $\sigma_\theta$ and `kf_initial_std`. This happens at start, after an
+  $d = \sqrt{\boldsymbol\nu_\theta^\top\mathbf S_k^{-1}\boldsymbol\nu_\theta}$, an innovation with $d > \kappa$ (`kf_rot_huber_k`) is
+  fused with $\mathbf R_\theta$ scaled by $d/\kappa$. An orientation spike then pulls the estimate less. Below
+  $\kappa$ the update is the plain one.
+- **Restart.** The filter starts at the measured pose, at rest ($\mathbf v_m = {}^{\mathcal M}\boldsymbol\omega = \mathbf 0$),
+  with its covariance from $\sigma_p$, $\sigma_\theta$ and `kf_initial_std` ($\sigma_{v,0}$, $\sigma_{\omega,0}$). This happens at start, after an
   offline gap, after a frame step it cannot fuse (backwards, as when Vicon restarts its count, or
   longer than `vicon_offline_timeout`) and at the gate's limit. Each time, it publishes again only
   after `rolling_window_size` frames.
 
 ### From the rigid body to base_link
 
-base_link is fixed on the body at the offset $d$ with the orientation $R_o$
-(`child_frame_offset_xyz`, `child_frame_offset_rpy_deg`). The estimate moves there by the
+base_link is fixed on the rigid body at the offset ${}^{\mathcal M}\mathbf r_{m,b}$ with the orientation
+${}^{\mathcal M}\mathbf R_{\mathcal B}$ (`child_frame_offset_xyz`, `child_frame_offset_rpy_deg`). The estimate moves there by the
 rigid-body formulas
 
 ```math
-p_c = p + R\,d,\qquad v_c = v + R\,(\omega \times d),\qquad R_c = R\,R_o,\qquad
-\omega_c = R_o^\top\,\omega
+\mathbf p_b = \mathbf p_m + {}^{\mathcal W}\mathbf R_{\mathcal M}\,{}^{\mathcal M}\mathbf r_{m,b},\qquad
+\mathbf v_b = \mathbf v_m + {}^{\mathcal W}\mathbf R_{\mathcal M}\,\big({}^{\mathcal M}\boldsymbol\omega \times {}^{\mathcal M}\mathbf r_{m,b}\big),\qquad
+{}^{\mathcal W}\mathbf R_{\mathcal B} = {}^{\mathcal W}\mathbf R_{\mathcal M}\,{}^{\mathcal M}\mathbf R_{\mathcal B},\qquad
+{}^{\mathcal B}\boldsymbol\omega = {}^{\mathcal B}\mathbf R_{\mathcal M}\,{}^{\mathcal M}\boldsymbol\omega
 ```
 
-and the covariance by their Jacobian, $\Sigma_c = J\,\Sigma\,J^\top$:
+and the covariance by their Jacobian $\mathbf D$, $\mathbf P_b = \mathbf D\,\mathbf P\,\mathbf D^\top$ with
+$\mathbf P = \operatorname{blockDiag}(\mathbf P_{\mathrm{trans}}, \mathbf P_{\mathrm{rot}})$:
 
 ```math
-\delta p_c = \delta p - R[d]_\times\,\delta\theta,\qquad
-\delta v_c = \delta v - R[\omega\times d]_\times\,\delta\theta - R[d]_\times\,\delta\omega,\qquad
-\delta\theta_c = R_o^\top\,\delta\theta,\qquad \delta\omega_c = R_o^\top\,\delta\omega
+\delta\mathbf p_b = \delta\mathbf p_m - {}^{\mathcal W}\mathbf R_{\mathcal M}[{}^{\mathcal M}\mathbf r_{m,b}]_\times\,\delta\boldsymbol\theta,\qquad
+\delta\mathbf v_b = \delta\mathbf v_m - {}^{\mathcal W}\mathbf R_{\mathcal M}[{}^{\mathcal M}\boldsymbol\omega\times{}^{\mathcal M}\mathbf r_{m,b}]_\times\,\delta\boldsymbol\theta
+- {}^{\mathcal W}\mathbf R_{\mathcal M}[{}^{\mathcal M}\mathbf r_{m,b}]_\times\,\delta\boldsymbol\omega,\qquad
+\delta\boldsymbol\theta_b = {}^{\mathcal B}\mathbf R_{\mathcal M}\,\delta\boldsymbol\theta,\qquad
+\delta\boldsymbol\omega_b = {}^{\mathcal B}\mathbf R_{\mathcal M}\,\delta\boldsymbol\omega
 ```
 
-This is why the filter tracks the body. Fed base_link's pose, it would take the orientation flicker
-times the lever arm as position noise and smooth both with one setting. Tracking the body keeps the
+This is why the filter tracks the rigid body. Fed base_link's pose, it would take the orientation flicker
+times the lever arm as position noise and smooth both with one setting. Tracking the rigid body keeps the
 flicker in the rotation block, whose density is set on its own.
 
-The messages carry $p_c$, $R_c$, the body-frame velocity $R_c^\top v_c$ and $\omega_c$. The
+The messages carry $\mathbf p_b$, ${}^{\mathcal W}\mathbf R_{\mathcal B}$, the velocity in $\mathcal B$,
+${}^{\mathcal B}\mathbf v_b = {}^{\mathcal B}\mathbf R_{\mathcal W}\,\mathbf v_b$, and ${}^{\mathcal B}\boldsymbol\omega$. The
 covariances follow nav_msgs/Odometry: the pose in the parent frame, its rotation part turned to the
-world axes ($R_c P_{\theta\theta} R_c^\top$); the twist in the child frame ($R_c^\top P_{vv} R_c$ and
-$P_{\omega\omega}$); cross terms included.
+world axes (${}^{\mathcal W}\mathbf R_{\mathcal B}\,\mathbf P_{b,\theta\theta}\,{}^{\mathcal B}\mathbf R_{\mathcal W}$); the twist in the child frame
+(${}^{\mathcal B}\mathbf R_{\mathcal W}\,\mathbf P_{b,vv}\,{}^{\mathcal W}\mathbf R_{\mathcal B}$ and $\mathbf P_{b,\omega\omega}$); cross terms included.
 
 ### What the densities mean
 
 At 250 Hz the steady filter acts, per axis, as a second-order Butterworth low-pass on the true rate:
 
 ```math
-\omega_n = \left(\frac{q}{\sigma^2\,T}\right)^{1/4},\qquad
+\omega_n = \left(\frac{\sigma_a^2}{\sigma_p^2\,\delta t}\right)^{1/4}\ \text{(translation)},\qquad
+\omega_n = \left(\frac{\sigma_\alpha^2}{\sigma_\theta^2\,\delta t}\right)^{1/4}\ \text{(rotation)},\qquad
 \text{lag of the rate estimate} \approx \frac{\sqrt{2}}{\omega_n}
 ```
 
-with $T$ the frame period. The chosen values give about 14 Hz and 16 ms for the translation, and
-about 10 Hz and 23 ms for the rotation. Scaling $q$ and $\sigma^2$ together leaves the estimate as it
-is; it only rescales the published covariances and the Huber distance.
+with $\delta t$ the frame period. The chosen values give about 14 Hz and 16 ms for the translation, and
+about 10 Hz and 23 ms for the rotation. Scaling a density and its $\sigma^2$ together ($\sigma_a^2$ with $\sigma_p^2$,
+$\sigma_\alpha^2$ with $\sigma_\theta^2$) leaves the estimate as it is; it only rescales the published covariances and the Huber distance.
 
 ### Timing and the two odometry topics
 
@@ -209,8 +238,8 @@ is; it only rescales the published covariances and the Huber distance.
 
 | Piece | Code |
 |---|---|
-| $[\cdot]_\times$, Exp, Log and $J_r$ on SO(3) | `pose_filter.py`: `skew`, `so3_exp`, `so3_log` (with its branch near $\pi$), `so3_right_jacobian` |
-| $F$ and $Q$ of one axis | `kinematic_blocks(dt)`; `np.kron` with $I_3$ builds the 6×6 blocks |
+| $[\cdot]_\times$, $\operatorname{Exp}$, $\operatorname{Log}$ and $\mathbf J_r$ on $SO(3)$ | `pose_filter.py`: `skew`, `so3_exp`, `so3_log` (with its branch near $\pi$), `so3_right_jacobian` |
+| $\mathbf F$ and $\mathbf Q$ of one axis | `kinematic_blocks(dt)`; `np.kron` with $\mathbb I_3$ builds the 6×6 blocks |
 | prediction of mean and covariance | `PoseFilter._propagate` |
 | Joseph update, Mahalanobis distance | `_correct`, `_mahalanobis` |
 | gate, Huber weight, outcome | `PoseFilter.update`, which returns `'accepted'`, `'rejected'`, `'reset'` or `'stale'` |
@@ -222,7 +251,7 @@ is; it only rescales the published covariances and the Huber distance.
 | parameters, messages, clipping | `../vicon_stream_node.py` |
 
 `test/test_pose_filter.py` checks the model against closed forms: exact tracking of
-constant-velocity motion, $Q$ against Van Loan's matrix exponential, the noise of the velocity at
+constant-velocity motion, $\mathbf Q$ against Van Loan's matrix exponential, the noise of the velocity at
 rest against the steady Riccati solution, dropped frames, the gate and the Huber weight, a 90°
 heading, yaw through $\pi$, and the transport against analytic rigid motion and against sampled
 covariances. `test/test_vicon_data_filter.py` checks the timing and the topics' rules with a fake
@@ -239,44 +268,49 @@ The **finite difference** (`ViconDataBuffer`) ran over the last $N$ = `rolling_w
 poses of base_link, timed by the host stamps $\tau = h - \ell$:
 
 ```math
-v^b = R_c^\top\,\frac{p_{c,N} - p_{c,1}}{\tau_N - \tau_1},\qquad
-\omega^b = R_c^\top\,\frac{\mathrm{wrap}(\Theta_N - \Theta_1)}{\tau_N - \tau_1}
+{}^{\mathcal B}\mathbf v_b^{\mathrm{fd}} = {}^{\mathcal B}\tilde{\mathbf R}_{\mathcal W}\,\frac{\tilde{\mathbf p}_{b,N} - \tilde{\mathbf p}_{b,1}}{\tau_N - \tau_1},\qquad
+{}^{\mathcal B}\boldsymbol\omega^{\mathrm{fd}} = {}^{\mathcal B}\tilde{\mathbf R}_{\mathcal W}\,\frac{\operatorname{wrap}(\tilde{\boldsymbol\Theta}_N - \tilde{\boldsymbol\Theta}_1)}{\tau_N - \tau_1}
 ```
 
-$\Theta$ are the sxyz Euler angles. `odometry/<obj>` published Vicon's pose with this twist, stamped
+$\tilde{\boldsymbol\Theta}$ are the measured sxyz Euler angles and ${}^{\mathcal B}\tilde{\mathbf R}_{\mathcal W}$ the transpose
+of the latest measured attitude. `odometry/<obj>` published Vicon's pose with this twist, stamped
 $h - \ell$, with zero covariances.
 
 The **Kalman filter** (`ViconLinearStateEstimator` inside `ViconDataFilter`) had the state
-$x = (p_c, v_c)$ of base_link in the world and measured both:
+$\mathbf x = (\mathbf p_b, \mathbf v_b)$ of base_link in $\mathcal W$ and measured both:
 
 ```math
-x_{k+1} = F(T_{\mathrm{tick}})\,x_k + w_k,\quad w_k \sim \mathcal{N}(0, Q),\qquad
-y = \begin{bmatrix} p_c + R_c v^b\,\delta \\ R_c v^b \end{bmatrix} = x + n,\quad
-n \sim \mathcal{N}(0, R_m)
+\mathbf x_{k+1} = \mathbf F(\delta t_{\mathrm{tick}})\,\mathbf x_k + \mathbf w_k,\quad \mathbf w_k \sim \mathcal N(\mathbf 0, \mathbf Q),\qquad
+\mathbf y_k = \begin{bmatrix} \tilde{\mathbf p}_b + {}^{\mathcal W}\tilde{\mathbf R}_{\mathcal B}\,{}^{\mathcal B}\mathbf v_b^{\mathrm{fd}}\,\Delta \\
+{}^{\mathcal W}\tilde{\mathbf R}_{\mathcal B}\,{}^{\mathcal B}\mathbf v_b^{\mathrm{fd}} \end{bmatrix} = \mathbf x_k + \mathbf n_k,\quad
+\mathbf n_k \sim \mathcal N(\mathbf 0, \mathbf R_{\mathbf y})
 ```
 
-- It predicted on every timer tick with a fixed $T_{\mathrm{tick}}$ = `filtered_odom_dt` = 4 ms and
-  a constant $Q$ per tick, diag($10^{-8}$ m², $1.44\times10^{-4}$ (m/s)²), however long the tick
+- It predicted on every timer tick with a fixed $\delta t_{\mathrm{tick}}$ = `filtered_odom_dt` = 4 ms and a
+  constant $\mathbf Q$ per tick,
+  $\operatorname{diag}(10^{-8}\,\mathrm{m^2}\,\mathbb I_3,\ 1.44\times10^{-4}\,\mathrm{(m/s)^2}\,\mathbb I_3)$, however long the tick
   really took.
-- It corrected on every frame with $R_m$ = diag($4\times10^{-8}$ m², $2.5\times10^{-4}$ (m/s)²). The
-  position was moved to now by the frame age $\delta = \min(h - \tau, 20\ \mathrm{ms})$; the
+- It corrected on every frame with
+  $\mathbf R_{\mathbf y} = \operatorname{diag}(4\times10^{-8}\,\mathrm{m^2}\,\mathbb I_3,\ 2.5\times10^{-4}\,\mathrm{(m/s)^2}\,\mathbb I_3)$. The
+  position was moved to now by the frame age $\Delta = \min(h - \tau, 20\ \mathrm{ms})$; the
   velocity measurement was the finite difference.
-- `odometry/filtered` published $p_c$ and $R_{\mathrm{now}}^\top v_c$, Vicon's Euler angles pushed
-  forward by the frame age times their finite-difference rate, and $\omega^b$ unchanged, stamped now.
+- `odometry/filtered` published $\hat{\mathbf p}_b$ and $({}^{\mathcal W}\tilde{\mathbf R}_{\mathcal B_{\mathrm{now}}})^\top\hat{\mathbf v}_b$, Vicon's
+  Euler angles pushed forward by the frame age times their finite-difference rate, and
+  ${}^{\mathcal B}\boldsymbol\omega^{\mathrm{fd}}$ unchanged, stamped now.
 
 ### What changed
 
 | | `g1_deploy` | now |
 |---|---|---|
 | frame filtered | base_link | the rigid body, moved to base_link at the output |
-| state | $p$, $v$ | $p$, $v$; $R$ on SO(3), $\omega$ |
+| state | $\mathbf p_b$, $\mathbf v_b$ | $\mathbf p_m$, $\mathbf v_m$; ${}^{\mathcal W}\mathbf R_{\mathcal M}$ on $SO(3)$, ${}^{\mathcal M}\boldsymbol\omega$ |
 | measurement | position and finite-difference velocity | pose only: position and orientation |
-| orientation | not filtered | filtered on SO(3), with its own density |
-| angular velocity | $R^\top$ times Euler-angle rates | the body angular velocity, a state |
-| time step | timer tick, fixed 4 ms, $Q$ per tick | Vicon frame clock, $Q(\Delta t)$ exact |
+| orientation | not filtered | filtered on $SO(3)$, with its own density |
+| angular velocity | ${}^{\mathcal B}\tilde{\mathbf R}_{\mathcal W}$ times Euler-angle rates | ${}^{\mathcal M}\boldsymbol\omega$, a state |
+| time step | timer tick, fixed 4 ms, $\mathbf Q$ per tick | Vicon frame clock, $\mathbf Q(\delta t)$ exact |
 | `odometry/<obj>` | Vicon's pose, finite-difference twist, no covariances | the filter at the capture time, with covariances |
 | `odometry/<obj>` stamp | host receive time minus the latency | frame clock plus the minimum host offset |
-| `odometry/filtered/<obj>` | filter $p$, $v$; Euler angles pushed forward without a cap; finite-difference $\omega$ | the filter predicted to now, capped at `kf_max_delay` |
+| `odometry/filtered/<obj>` | filter $\hat{\mathbf p}_b$, $\hat{\mathbf v}_b$; Euler angles pushed forward without a cap; ${}^{\mathcal B}\boldsymbol\omega^{\mathrm{fd}}$ | the filter predicted to now, capped at `kf_max_delay` |
 | outliers | none | physical gate with restart; Huber weight on the rotation |
 | restarts | only after an offline gap | also after a step it cannot fuse or a lasting rejection, each with a warm-up |
 | a frame that fails to parse | the previous frame published again | skipped |
@@ -284,22 +318,22 @@ n \sim \mathcal{N}(0, R_m)
 
 ### Defects found, and what became of them
 
-1. **Angular velocity from Euler-angle rates.** $R^\top\dot\Theta$ is the body rate only for a pure
-   yaw or near zero heading and pitch. Rolling at 1 rad/s about the body's x axis, `g1_deploy`'s
-   buffer read +1 rad/s where the truth was -1 (g1's offset turned 180° in yaw, heading 0), and
-   (0, -0.94, 0.33) instead of (1, 0, 0) at a 90° heading without an offset. Now $\omega$ is a state
-   in the body frame, tested at a 90° heading and through yaw ±π.
+1. **Angular velocity from Euler-angle rates.** ${}^{\mathcal B}\tilde{\mathbf R}_{\mathcal W}\,\dot{\tilde{\boldsymbol\Theta}}$ is the body
+   rate ${}^{\mathcal B}\boldsymbol\omega$ only for a pure yaw or near zero heading and pitch. Rolling at 1 rad/s
+   about the x axis of $\mathcal M$, `g1_deploy`'s buffer read +1 rad/s where the truth was -1 (g1's offset turned 180° in yaw, heading 0), and
+   (0, -0.94, 0.33) instead of (1, 0, 0) at a 90° heading without an offset. Now ${}^{\mathcal M}\boldsymbol\omega$ is a
+   state, tested at a 90° heading and through yaw ±π.
 2. **Finite difference timed by the host.** Every host delay went straight into $\tau_N - \tau_1$,
    16 ms across the window. On the moving recording, timing the same difference by frame number
    lowered its velocity RMS only from 46.3 to 43.8 mm/s; the flicker mattered more. Now no host time
    enters the filter.
 3. **The finite difference as a measurement.** Its errors are correlated from frame to frame,
    because the windows overlap, and they carry defects 1 and 2 and the flicker; the filter could
-   only lag them. $Q$ did not follow the time between predictions, and predictions followed the
-   timer, not the frames. Now only poses are measured, on the frame clock, with $Q(\Delta t)$. The
+   only lag them. $\mathbf Q$ did not follow the time between predictions, and predictions followed the
+   timer, not the frames. Now only poses are measured, on the frame clock, with $\mathbf Q(\delta t)$. The
    619a73e draft had already moved the filter to the frame clock with a position-only measurement.
 4. **base_link filtered directly.** The flicker times the lever arm entered the position. Now the
-   body is filtered and the estimate transported.
+   rigid body is filtered and the estimate transported.
 5. **A frame that failed to parse went out twice.** The `continue` after the parse error was
    commented out, so the previous frame was published again under a new stamp on `odometry/<obj>`,
    `vicon_pose/<obj>` and TF. Reproduced under ROS. Now the frame is skipped.
@@ -321,9 +355,9 @@ at-rest state at once, a frame of zero velocity on both topics.
 
 | `g1_deploy` | now |
 |---|---|
-| `kf_process_noise`: 6 variances per predict step | `kf_noise_psd`: $q_t$, $q_r$ |
+| `kf_process_noise`: 6 variances per predict step | `kf_noise_psd`: $\sigma_a^2$, $\sigma_\alpha^2$ |
 | `kf_measurement_noise`: 6 variances, position and finite-difference velocity | `kf_measurement_std`: $\sigma_p$, $\sigma_\theta$ |
-| `kf_initial_covariance`: 6 variances | `kf_initial_std`: velocity and angular velocity after a restart |
+| `kf_initial_covariance`: 6 variances | `kf_initial_std`: $\sigma_{v,0}$, $\sigma_{\omega,0}$ for velocity and angular velocity after a restart |
 | none | `kf_gate`, `kf_max_rejections`, `kf_rot_huber_k`, `kf_clock_window` |
 | `kf_max_delay`: cap on moving a measurement to now | same name: cap on the prediction to the publish time |
 | `rolling_window_size`: the finite-difference window | same name: the warm-up after a restart |
@@ -409,7 +443,7 @@ unparsable frame, gaps of 60 and 300 ms, 200 ms without a frame rate, g1 missing
 - The flicker is smoothed, not removed.
 - The densities fit g1 moved by hand. Walking has sharper accelerations, which a constant-velocity
   model shows as lag. If the velocity looks late on the robot, raise `kf_noise_psd`; if it looks
-  noisy, lower it. The ratio $q/\sigma^2$ is what counts.
+  noisy, lower it. The ratios $\sigma_a^2/\sigma_p^2$ and $\sigma_\alpha^2/\sigma_\theta^2$ are what count.
 - Not verified yet: the real SDK's frame delivery, the lab machine's load and the robot's own motion.
 - The recordings and the script behind these numbers were removed from the tree. They remain in the
   history at f404fb6 (`data/2026-11-04_g1_static_dynamic/`, `replay_vicon_log.py`).
