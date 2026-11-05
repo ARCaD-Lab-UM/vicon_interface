@@ -88,7 +88,9 @@ def test_clean_frames_score_near_zero_and_host_stalls_reach_only_the_host_differ
     log = rv.read_markers(tmp_path / 'rec_markers.npz', RATE)
     # g1 sits below its rigid body: the filter tracks the body and moves the estimate down,
     # which is exact; tracking the child, swung on an arc by the rotation, would lag
-    t, p, R, scores, lags = rv.evaluate(log, params(), 0)
+    fast = dict(params(), kf_cv_noise_psd=[0.036, 0.9], kf_ca_noise_psd=[36.0, 900.0],
+                kf_rot_huber_k=0.0)  # densities that settle within the 50 frames left out
+    t, p, R, scores, lags = rv.evaluate(log, fast, 0)
     for name in ('vicon', 'filter cv', 'filter ca'):  # "ca" settles last, by 1e-8 at frame 50
         assert scores['position'][name][2] < 1e-7, name  # max error, m
         assert scores['rotation'][name][2] < 1e-7, name  # rad
