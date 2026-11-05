@@ -35,9 +35,9 @@
     # the next derivative white noise; pose-only measurement. Its estimate moves to the child frame with
     # its own angular velocity. Stepped once per Vicon frame by the Vicon clock (frame number / frame
     # rate); the timer only predicts the latest estimate to its publish time.
-    # The densities and kf_rot_huber_k were set with replay_vicon_log.py on data/2026-11-04_g1_static_dynamic:
-    # the lowest error RMS over both recordings and all four outputs among the settings whose velocity and
-    # angular-velocity jumps stay small. Vicon's orientation flickers, so the rotation is smoothed far
+    # The densities and kf_rot_huber_k were set on two g1 recordings of 2026-11-04, one at rest and one
+    # moved by hand: the lowest error RMS over both and all four outputs among the settings whose velocity
+    # and angular-velocity jumps stay small. Vicon's orientation flickers, so the rotation is smoothed far
     # more than the translation; "ca" scored worse than "cv" there. What matters is density / std^2.
     kf_motion_model: "cv"                  # "cv" constant velocity or "ca" constant acceleration
     kf_cv_noise_psd: [0.01, 0.05625]       # white acceleration: m^2/s^3 position, rad^2/s^3 orientation
@@ -48,7 +48,6 @@
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter
     kf_rot_huber_k: 2.0                    # sigma above which a rotation residual weighs k / distance; 0 off
     twist_source: "filter"                 # odometry/<obj> twist: "filter" at the frame, or "finite_difference"
-    raw_log_path: ""                       # CSV of every raw frame for replay_vicon_log.py, strftime allowed; "" off
     kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time
     kf_clock_window: 2.0            # s: window of the minimum host-minus-Vicon clock offset
     vicon_offline_timeout: 0.1      # s without a frame: object offline, odometry/filtered paused, reset on return

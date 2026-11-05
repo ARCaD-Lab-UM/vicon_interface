@@ -22,10 +22,6 @@ import numpy as np
 
 from vicon_interface.vicon_data_filter import ViconDataFilter
 
-# Columns of the raw log (raw_log_path): one line per object and frame, as the SDK gave it.
-RAW_LOG_COLUMNS = ("object", "frame_number", "frame_rate", "host_time", "latency",
-                   "x_mm", "y_mm", "z_mm", "euler_x", "euler_y", "euler_z")
-
 
 @dataclass
 class TrackedObject:
@@ -128,16 +124,6 @@ class ViconStreamNode(Node):
                 "`twist_source` must be \"filter\" or \"finite_difference\"; "
                 f"got \"{self.twist_source_}\".")
             raise ValueError("Bad parameter `twist_source`")
-        raw_log_path = (
-            self.declare_parameter("raw_log_path", "").get_parameter_value().string_value
-        )
-        self.raw_log_ = None
-        if raw_log_path:
-            raw_log_path = time.strftime(raw_log_path)
-            self.raw_log_ = open(raw_log_path, "w")
-            self.raw_log_.write(",".join(RAW_LOG_COLUMNS) + "\n")
-            self.raw_log_flushed_ = time.monotonic()
-            self.get_logger().info(f"Logging raw Vicon frames to {raw_log_path}.")
         self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
         self.vicon_online_jitter_time_ = self._read_double("vicon_online_jitter_time")
 
@@ -237,16 +223,6 @@ class ViconStreamNode(Node):
             raise ValueError(f"Bad parameter `{name}`")
         return values
 
-    def _log_raw_frame(self, object_name, frame_number, *values):
-        """Append one raw frame (RAW_LOG_COLUMNS) to the raw log, flushed once a second."""
-        fields = [object_name, str(int(frame_number))]
-        fields += ["nan" if v is None else repr(float(v)) for v in values]
-        self.raw_log_.write(",".join(fields) + "\n")
-        now = time.monotonic()
-        if now - self.raw_log_flushed_ > 1.0:
-            self.raw_log_.flush()
-            self.raw_log_flushed_ = now
-
     def _read_double(self, name):
         return (
             self.declare_parameter(name, rclpy.Parameter.Type.DOUBLE)
@@ -306,9 +282,6 @@ class ViconStreamNode(Node):
                 try:
                     obj = position[0]
                     _, _, x, y, z, roll, pitch, yaw = obj
-                    if self.raw_log_ is not None:
-                        self._log_raw_frame(object_name, frame_num, frame_rate, time.monotonic(),
-                                            latency, x, y, z, roll, pitch, yaw)
                     q = tf_transformations.quaternion_from_euler(roll, pitch, yaw, "rxyz")
                     roll, pitch, yaw = tf_transformations.euler_from_quaternion(q, "sxyz")
                     tracked_object.buffer.add_pose(
