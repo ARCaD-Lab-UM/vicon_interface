@@ -19,6 +19,8 @@ velocity and height.
   Either kind can be stale: the code, the launch file and `param/*.yaml` win. A note is written only
   with the user's agreement and holds only settled facts someone will need again, in a few lines;
   measurements, guesses and the story of an investigation stay in the conversation.
+- `vicon_interface/state_estimators/README.md` holds the pose filter's equations, its code map, what
+  changed from `g1_deploy` and its scores; it is the one document that quotes the `kf_*` values.
 - A number that exists in code or YAML is quoted in at most one document, with its source. Elsewhere, link.
 - Before changing a documented fact, grep the repo for it and fix every copy.
 
@@ -120,6 +122,7 @@ degrades the published Euler angles, not the twist.
 |---|---|
 | dependencies, build, launch, is it publishing | skill `build-and-run` |
 | a new Ubuntu or ROS release | `.agents/notes/ros2-jazzy-migration.md` |
+| the filter's model, tuning, or how it differs from `g1_deploy` | `vicon_interface/state_estimators/README.md` |
 | what a consumer relies on | "Things that bite consumers" above, then `humanoid-control`'s `vicon_ros2_client.hpp` |
 
 ## Safety and irreversible actions
