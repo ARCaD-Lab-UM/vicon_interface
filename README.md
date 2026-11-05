@@ -51,7 +51,7 @@ The unit tests need no Vicon and no running node, only the sourced ROS environme
 
 ```bash
 source /opt/ros/$ROS_DISTRO/setup.bash
-/usr/bin/python3 -m pytest test/test_state_estimators.py test/test_pose_filter.py test/test_vicon_data_filter.py test/test_replay_vicon_log.py
+/usr/bin/python3 -m pytest test/test_state_estimators.py test/test_pose_filter.py test/test_vicon_data_filter.py test/test_replay_vicon_log.py test/test_recordings.py
 ```
 
 `colcon test --packages-select vicon_interface` runs the same tests plus the ament linters, which still report the package's older style findings.
