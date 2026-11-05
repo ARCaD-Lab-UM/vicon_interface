@@ -27,7 +27,7 @@
     #                         |----------- g1 -----------|  |----------- box -----------|
     child_frame_offset_xyz:    [0.0, 0.0, -0.266,          0.0, 0.0, -0.532]
     child_frame_offset_rpy_deg: [0.0, 0.0, 180.0,          0.0, 0.0, 180.536]
-    poll_vicon_dt: 0.004 # 0.01
+    poll_vicon_dt: 0.002 # s, below the Vicon frame period: at 0.004, the period itself, the loop runs late and drops a frame every ~0.3 s
     filtered_odom_dt: 0.004 # 0.01
 
     # Pose Kalman filter behind both odometry topics (state_estimators/pose_filter.py): the rigid body's
