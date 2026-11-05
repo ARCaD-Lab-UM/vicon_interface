@@ -70,7 +70,8 @@ velocity and height.
   gates the frame and corrects; host time never enters `dt`. The timer only predicts to its publish
   time (at most `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
   `vicon_offline_timeout` without a frame the `Daemon` stops publishing; the next frame resets the
-  filter, which publishes again after `rolling_window_size` frames, also how it starts.
+  filter, which publishes again after `rolling_window_size` frames, also how it starts and how it
+  resumes after any other restart (a frame step too long to fuse, a restarted frame count).
 - Topics per object `<obj>` in `vicon_object_names`: `vicon_pose/<obj>` (PoseWithCovarianceStamped),
   `odometry/<obj>` (Odometry, the filtered pose and twist at the frame), `odometry/filtered/<obj>`
   (the same moved to the publish time; both twists in the child frame, angular part the true ω),

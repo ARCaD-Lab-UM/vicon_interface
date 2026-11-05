@@ -319,6 +319,8 @@ def test_a_restarted_frame_count_restarts_the_filter(clock):
     assert f.kf_resets_ == 1
     for j in range(50):  # Vicon restarts its frame count; frames keep coming on time
         feed(f, clock, 50 + j, v * (50 + j) * DT, (0.0, 0.0, 0.0), frame_number=7 + j)
+        warm = j >= WINDOW - 1  # the restarted filter starts at rest: it warms up as at start
+        assert (f.get_frame_state()[0] is not None) == warm and f.update() == warm
     assert f.kf_resets_ == 2
     est = filtered(f)
     assert np.allclose(est.v, v, atol=1e-3)
@@ -339,6 +341,14 @@ def test_without_a_frame_rate_the_filter_waits(clock):
     feed(f, clock, 40, np.zeros(3), (0.0, 0.0, 0.0), frame_rate=0.0)  # the rate goes missing
     assert not f.has_frame_clock() and f.update() is False  # no held prediction on the topic
     assert f.get_frame_state() == (None, None)
+    v = np.array([0.3, -0.1, 0.05])
+    for k in range(41, 120):  # moving; the rate returns after 120 ms, too long a step to fuse
+        feed(f, clock, k, v * (k - 40) * DT, (0.0, 0.0, 0.0), frame_rate=0.0 if k < 70 else RATE)
+        if k >= 70:
+            warm = k >= 70 + WINDOW - 1  # restarted at rest: no zero velocity on the topics
+            assert (f.get_frame_state()[0] is not None) == warm and f.update() == warm
+    assert f.kf_resets_ == 2
+    assert np.allclose(filtered(f).v, v, atol=1e-3)
 
 
 def test_raw_buffer_outputs_are_unchanged_by_the_filter(clock):

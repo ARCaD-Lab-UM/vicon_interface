@@ -73,6 +73,7 @@ class ViconDataFilter(ViconDataBuffer):
                 self.kf_resets_ += 1
                 self.kf_needs_reset_ = False
                 self.kf_initialized_ = True
+                self.frames_since_online_ = 1  # warm up again, also when frames never stopped
             else:
                 self.frame_time_ += step  # a dropped frame is one longer step
                 outcome = self.kf_.update(self.frame_time_, p, R)
