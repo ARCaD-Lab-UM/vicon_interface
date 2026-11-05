@@ -46,7 +46,6 @@
     kf_gate: [0.02, 0.2]                   # m, rad: innovations above which a frame is rejected (a marker swap)
     kf_max_rejections: 5                   # frames rejected in a row that reset the filter
     kf_rot_huber_k: 2.0                    # sigma above which a rotation residual weighs k / distance; 0 off
-    twist_source: "filter"                 # odometry/<obj> twist: "filter" at the frame, or "finite_difference"
     kf_max_delay: 0.02              # s: cap on the prediction from the last fused frame to the publish time
     kf_clock_window: 2.0            # s: window of the minimum host-minus-Vicon clock offset
     vicon_offline_timeout: 0.1      # s without a frame: object offline, odometry/filtered paused, reset on return

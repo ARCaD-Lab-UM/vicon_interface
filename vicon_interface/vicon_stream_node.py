@@ -106,14 +106,6 @@ class ViconStreamNode(Node):
         )
         self.kf_max_delay_ = self._read_double("kf_max_delay")
         self.kf_clock_window_ = self._read_double("kf_clock_window")
-        self.twist_source_ = (
-            self.declare_parameter("twist_source", "filter").get_parameter_value().string_value
-        )
-        if self.twist_source_ not in ("filter", "finite_difference"):
-            self.get_logger().fatal(
-                "`twist_source` must be \"filter\" or \"finite_difference\"; "
-                f"got \"{self.twist_source_}\".")
-            raise ValueError("Bad parameter `twist_source`")
         self.vicon_offline_timeout_ = self._read_double("vicon_offline_timeout")
         self.vicon_online_jitter_time_ = self._read_double("vicon_online_jitter_time")
 
@@ -287,13 +279,6 @@ class ViconStreamNode(Node):
                 if stamp is not None:  # capture time from the Vicon clock, free of host delays
                     age = max(time.monotonic() - stamp, 0.0)  # s
                     frame_stamp = (self.get_clock().now() - Duration(seconds=age)).to_msg()
-                if self.twist_source_ == "filter":
-                    publish_odom = estimate is not None  # not while the filter warms up
-                    v_body = estimate.R.T @ estimate.v if publish_odom else np.zeros(3)  # m/s
-                    ang_v_body = estimate.w if publish_odom else np.zeros(3)  # rad/s, child
-                else:
-                    v_body, ang_v_body, timestamp = tracked_object.buffer.get_latest_velocity()
-                    publish_odom = timestamp != 0
                 pose, timestamp = tracked_object.buffer.get_latest_pose()
                 if timestamp == 0:
                     continue
@@ -301,41 +286,38 @@ class ViconStreamNode(Node):
                 x_r, y_r, z_r, roll_r, pitch_r, yaw_r = np.clip(
                     pose, self.min_states_[:6], self.max_states_[:6])
                 q_r = tf_transformations.quaternion_from_euler(roll_r, pitch_r, yaw_r)
-                odom_pose = pose
-                if self.twist_source_ == "filter" and publish_odom:
+
+                if estimate is not None:  # None while the filter warms up
                     m = np.eye(4)
                     m[:3, :3] = estimate.R
-                    odom_pose = np.r_[estimate.p, tf_transformations.euler_from_matrix(m, "sxyz")]
-                states = np.clip(np.r_[odom_pose, v_body, ang_v_body],
-                                 self.min_states_, self.max_states_)
-                x, y, z, roll, pitch, yaw = states[:6]
-                v_body, ang_v_body = states[6:9], states[9:12]
+                    states = np.clip(
+                        np.r_[estimate.p, tf_transformations.euler_from_matrix(m, "sxyz"),
+                              estimate.R.T @ estimate.v, estimate.w],  # twist in the child frame
+                        self.min_states_, self.max_states_)
+                    x, y, z, roll, pitch, yaw = states[:6]
+                    v_body, ang_v_body = states[6:9], states[9:12]  # m/s, rad/s
 
-                odom_msg = Odometry()
-                odom_msg.header.stamp = frame_stamp
-                odom_msg.header.frame_id = self.parent_frame_id_
-                odom_msg.child_frame_id = tracked_object.child_frame_id
-                odom_msg.pose.pose.position.x = x
-                odom_msg.pose.pose.position.y = y
-                odom_msg.pose.pose.position.z = z
-                q = tf_transformations.quaternion_from_euler(roll, pitch, yaw)
-                odom_msg.pose.pose.orientation.x = q[0]
-                odom_msg.pose.pose.orientation.y = q[1]
-                odom_msg.pose.pose.orientation.z = q[2]
-                odom_msg.pose.pose.orientation.w = q[3]
-                odom_msg.twist.twist.linear.x = v_body[0]
-                odom_msg.twist.twist.linear.y = v_body[1]
-                odom_msg.twist.twist.linear.z = v_body[2]
-                odom_msg.twist.twist.angular.x = ang_v_body[0]
-                odom_msg.twist.twist.angular.y = ang_v_body[1]
-                odom_msg.twist.twist.angular.z = ang_v_body[2]
-                if self.twist_source_ == "filter" and publish_odom:
+                    odom_msg = Odometry()
+                    odom_msg.header.stamp = frame_stamp
+                    odom_msg.header.frame_id = self.parent_frame_id_
+                    odom_msg.child_frame_id = tracked_object.child_frame_id
+                    odom_msg.pose.pose.position.x = x
+                    odom_msg.pose.pose.position.y = y
+                    odom_msg.pose.pose.position.z = z
+                    q = tf_transformations.quaternion_from_euler(roll, pitch, yaw)
+                    odom_msg.pose.pose.orientation.x = q[0]
+                    odom_msg.pose.pose.orientation.y = q[1]
+                    odom_msg.pose.pose.orientation.z = q[2]
+                    odom_msg.pose.pose.orientation.w = q[3]
+                    odom_msg.twist.twist.linear.x = v_body[0]
+                    odom_msg.twist.twist.linear.y = v_body[1]
+                    odom_msg.twist.twist.linear.z = v_body[2]
+                    odom_msg.twist.twist.angular.x = ang_v_body[0]
+                    odom_msg.twist.twist.angular.y = ang_v_body[1]
+                    odom_msg.twist.twist.angular.z = ang_v_body[2]
                     pose_covariance, twist_covariance = estimate.odometry_covariances()
                     odom_msg.pose.covariance = pose_covariance.ravel().tolist()
                     odom_msg.twist.covariance = twist_covariance.ravel().tolist()
-                else:
-                    odom_msg.pose.covariance = self.pose_covariance_  # the Vicon pose as measured
-                if publish_odom:
                     tracked_object.odom_publisher.publish(odom_msg)
 
                 pose_msg = PoseWithCovarianceStamped()
@@ -346,14 +328,14 @@ class ViconStreamNode(Node):
                 pose_msg.pose.pose.orientation.y = q_r[1]
                 pose_msg.pose.pose.orientation.z = q_r[2]
                 pose_msg.pose.pose.orientation.w = q_r[3]
-                pose_msg.header.stamp = odom_msg.header.stamp
+                pose_msg.header.stamp = frame_stamp
                 pose_msg.pose.covariance = self.pose_covariance_
                 pose_msg.header.frame_id = self.parent_frame_id_
                 tracked_object.pose_publisher.publish(pose_msg)
 
                 if self.publish_tf_:
                     transform = TransformStamped()
-                    transform.header.stamp = odom_msg.header.stamp
+                    transform.header.stamp = frame_stamp
                     transform.header.frame_id = self.parent_frame_id_
                     transform.child_frame_id = tracked_object.child_frame_id
                     transform.transform.translation.x = x_r

@@ -21,7 +21,7 @@ Please update `vicon_tracker_ip` and `vicon_object_names` (list) to match the Vi
 The node publishes each object under:
 
 - `vicon_pose/<name>`: the pose of the child frame in `parent_frame_id` as Vicon gives it, its covariance from `kf_measurement_std`; `/tf` carries the same pose.
-- `odometry/<name>`: the pose filter's pose and twist (child frame) at the capture time, with the filter's covariances. `twist_source: finite_difference` publishes Vicon's pose and a rolling-window finite difference instead. `header.stamp` is the capture time from the Vicon frame clock, so a consumer can compensate the delay itself. While the filter restarts, for `rolling_window_size` frames, it is not published.
+- `odometry/<name>`: the pose filter's pose and twist (child frame) at the capture time, with the filter's covariances. `header.stamp` is the capture time from the Vicon frame clock, so a consumer can compensate the delay itself. While the filter restarts, for `rolling_window_size` frames, it is not published.
 - `odometry/filtered/<name>`: a Kalman-filtered pose and child-frame twist (constant-velocity model), published by a timer at `filtered_odom_dt`, already moved to the publish time (the Vicon latency is compensated) and stamped `now`. It pauses while the object has had no frame for `vicon_offline_timeout`. Tuning lives in the `kf_*` and `vicon_*` entries of `param/vicon_interface.param.yaml`, each commented with its unit.
 - `vicon_latency/<name>`: the Vicon pipeline latency in seconds.
 - `/tf`: `parent_frame_id -> <child frame>` per object when `publish_tf` is true.

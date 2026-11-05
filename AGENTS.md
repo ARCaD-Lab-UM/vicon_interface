@@ -44,10 +44,10 @@ velocity and height.
 ## Layout
 
 - `vicon_interface/vicon_stream_node.py` the node: parameters, the SDK polling loop, the publishers.
-- `vicon_interface/vicon_data_buffer.py` `ViconDataBuffer`, the per-object rolling window that turns
-  poses into velocities and applies the frame offset.
+- `vicon_interface/vicon_data_buffer.py` `ViconDataBuffer`, the per-object rolling window of poses
+  with the frame offset applied, and the rigid body's own latest pose.
 - `vicon_interface/vicon_data_filter.py` `ViconDataFilter(ViconDataBuffer)`, the same window plus the
-  Kalman filter and watchdog behind `odometry/filtered/<obj>`; the node holds one per object.
+  Kalman filter and watchdog behind both odometry topics; the node holds one per object.
 - `vicon_interface/state_estimators/` and `vicon_interface/utils/daemon.py`: arc-bridge's
   `KalmanFilter`, `FloatingBaseLinearStateEstimator` (explicit `A`, no scipy) and `Daemon` ported as
   they are, plus `PoseFilter` (`pose_filter.py`: pose only, constant velocity).
@@ -63,9 +63,7 @@ velocity and height.
   own callback group under a `MultiThreadedExecutor`. The two threads meet only inside the per-object
   `ViconDataFilter`, under its lock. Its getters return copies: the node writes clipped values into them.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
-  triple re-expressed as `sxyz`, the frame offset applied, then a finite-difference velocity across the
-  whole rolling window, timed by the Vicon clock, rotated into the child frame. The angular velocity is
-  the body rate log(R_first^T R_last) / dt across the window, so yaw at ±180° cannot spike it.
+  triple re-expressed as `sxyz`, the frame offset applied for `vicon_pose` and TF.
 - `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the rigid body's position and SO(3)
   orientation with their rates (constant velocity), only the pose measured. Per
   frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
@@ -92,10 +90,7 @@ tracked rigid body's own frame (`T_marker->child`). With `d` the offset and `R` 
 p_child = p_marker + R·d        v_child = v_marker + R·(ω × d)        ω_child = R_offᵀ·ω
 ```
 
-- **The finite difference** has no ω, so the offset is applied per sample in
-  `ViconDataBuffer.add_pose()`, upstream: differentiating the child's position gives `ω × r` for free.
-  Applied after the difference, the velocity misses it (0.384 m/s on a 0.25 m arm and a 10° / 1.4 Hz
-  pitch). Keep it upstream there.
+- **`vicon_pose` and TF** take the offset per sample, in `ViconDataBuffer.add_pose()`.
 - **The pose filter** tracks the rigid body and moves each estimate with its own ω
   (`PoseEstimate.transported`). Vicon's orientation flicker reaches the child's position times the arm,
   0.27 mm per mrad at 0.266 m; tracking the body keeps it in the rotation channel, which can then be
@@ -115,8 +110,8 @@ degrades the published Euler angles, not the twist.
   publish time and stamped `now()` by design, and pauses while the object is offline; a consumer that
   compensates latency itself uses the unfiltered one, as `humanoid-control` does
   (`modules/bridges/vicon_client`, `/odometry/arcadian`).
-- `odometry/<obj>`'s pose and twist are the filter's at its stamp, Vicon's pose stays on `vicon_pose` and
-  TF; `twist_source: finite_difference` brings back Vicon's pose and the rolling-window difference.
+- `odometry/<obj>`'s pose and twist are the filter's at its stamp; Vicon's pose stays on `vicon_pose`
+  and TF.
 
 ## Where to look next
 

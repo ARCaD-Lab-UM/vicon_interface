@@ -138,59 +138,31 @@ def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock):
     """The SDK drops frames and the host picks them up late; the Vicon clock keeps dt exact."""
     rng = np.random.default_rng(2)
     f = make_filter()
-    raw = ViconDataBuffer(6, WINDOW)
     v = np.array([0.5, 0.2, 0.0])
-    err_kf, err_fd = [], []
+    err = []
     k = 0
     for i in range(400):
         k += 2 if rng.random() < 0.05 else 1  # 5 % of the frames never reach the node
         delay = rng.uniform(0.0, 0.9 * DT)  # s, waiting the SDK latency does not include
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), delay=delay)
-        raw.add_pose((1000.0 * v[0] * k * DT, 1000.0 * v[1] * k * DT, 0.0, 0.0, 0.0, 0.0), 0.0)
         if i >= 100:
-            err_kf.append(np.max(np.abs(filtered(f).v - v)))
-            err_fd.append(np.max(np.abs(raw.get_latest_velocity()[0] - v)))
-    print(f'worst velocity error: kf {max(err_kf):.2e} m/s, '
-          f'host-clocked finite difference {max(err_fd):.3f} m/s')
-    assert max(err_kf) < 1e-4
-
-
-def test_the_finite_difference_is_timed_by_the_frame_clock(clock):
-    """The fallback twist: host delays and dropped frames reach it only through the host clock."""
-    rng = np.random.default_rng(5)
-    f = make_filter()
-    host = ViconDataBuffer(6, WINDOW)  # given no frame times, as before
-    v = np.array([0.5, 0.2, 0.0])
-    err_frame, err_host = [], []
-    k = 0
-    for i in range(300):
-        k += 2 if rng.random() < 0.05 else 1  # 5 % of the frames never reach the node
-        delay = rng.uniform(0.0, 0.9 * DT)  # s, waiting the SDK latency does not include
-        feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), delay=delay)
-        host.add_pose((1000.0 * v[0] * k * DT, 1000.0 * v[1] * k * DT, 0.0, 0.0, 0.0, 0.0), 0.0)
-        if i >= WINDOW:
-            err_frame.append(np.max(np.abs(f.get_latest_velocity()[0] - v)))
-            err_host.append(np.max(np.abs(host.get_latest_velocity()[0] - v)))
-    assert max(err_frame) < 1e-9
-    assert max(err_host) > 0.05  # what the host clock did to the same frames
-    for j in range(WINDOW):  # Vicon restarts its frame count: the window starts over
-        feed(f, clock, k + 1 + j, v * (k + 1 + j) * DT, (0.0, 0.0, 0.0), frame_number=3 + j)
-        assert f.is_ready() == (j == WINDOW - 1)
-    assert np.allclose(f.get_latest_velocity()[0], v, atol=1e-9)
+            err.append(np.max(np.abs(filtered(f).v - v)))
+    assert max(err) < 1e-4
 
 
 def test_sinusoid_velocity_error_is_small(clock):
-    """1 and 2 Hz sinusoids: the filter lags about as much as the 5-frame difference."""
+    """1 and 2 Hz sinusoids: the filter lags about as much as a 5-frame difference."""
     f = make_filter()
-    err_kf, err_fd = [], []
+    positions, err_kf, err_fd = [], [], []
     for k in range(500):
         t = k * DT
         pos = np.array([0.1 * np.sin(2 * np.pi * t), 0.0, 0.02 * np.sin(4 * np.pi * t)])
         feed(f, clock, k, pos, (0.0, 0.0, 0.0))
+        positions.append(pos)
         if t >= 1.0:
             v_true = np.array([0.2 * np.pi * np.cos(2 * np.pi * t), 0.0,
                                0.08 * np.pi * np.cos(4 * np.pi * t)])
-            v_fd, _, _ = f.get_latest_velocity()
+            v_fd = (positions[-1] - positions[-WINDOW]) / ((WINDOW - 1) * DT)
             err_kf.append(np.linalg.norm(filtered(f).v - v_true))
             err_fd.append(np.linalg.norm(v_fd - v_true))
     rms_kf = np.sqrt(np.mean(np.square(err_kf)))
@@ -203,13 +175,14 @@ def test_sinusoid_velocity_error_is_small(clock):
 def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(clock):
     f = make_filter()
     rng = np.random.default_rng(0)
-    v_kf, v_fd = [], []
+    positions, v_kf, v_fd = [], [], []
     for k in range(2000):
         pos = np.array([1.0, 2.0, 0.5]) + 1e-4 * rng.standard_normal(3)  # 0.1 mm white noise
         feed(f, clock, k, pos, (0.0, 0.0, 0.0))
+        positions.append(pos)
         if k >= 100:
             v_kf.append(filtered(f).v)
-            v_fd.append(f.get_latest_velocity()[0])
+            v_fd.append((positions[-1] - positions[-WINDOW]) / ((WINDOW - 1) * DT))
     std_kf = np.std(np.array(v_kf), axis=0)
     std_fd = np.std(np.array(v_fd), axis=0)
     print(f'static velocity std: kf {std_kf}, finite difference {std_fd}')
@@ -255,20 +228,6 @@ def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock):
     assert np.allclose(so3_log((R @ offset_R).T @ est.R), 0.0, atol=1e-7)
     assert np.allclose(est.v, v + R @ np.cross(w, offset_xyz), atol=1e-5)  # world
     assert np.allclose(est.w, offset_R.T @ w, atol=1e-5)  # the child's body frame
-
-
-def test_the_finite_difference_reports_the_body_angular_velocity(clock):
-    f = make_filter()
-    w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis
-    heading = so3_exp(np.array([0.0, 0.0, np.pi / 2]))
-    for k in range(20):
-        feed(f, clock, k, np.zeros(3), sdk_angles(heading @ so3_exp(w_body * k * DT)))
-    assert np.allclose(f.get_latest_velocity()[1], w_body, atol=1e-9)  # was [0, -1, 0]
-    rate = 2.0  # rad/s; yaw passes +pi at frame 50
-    for k in range(20, 100):
-        feed(f, clock, k, np.zeros(3), (0.0, 0.0, np.pi - 0.4 + rate * (k - 20) * DT))
-        if k >= 20 + WINDOW:
-            assert np.allclose(f.get_latest_velocity()[1], [0.0, 0.0, rate], atol=1e-9)
 
 
 def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock):
@@ -399,10 +358,8 @@ def test_raw_buffer_outputs_are_unchanged_by_the_filter(clock):
         clock.t = 100.0 + t
         r, p, y = node_angles(*rpy)
         sample = (1000.0 * pos[0], 1000.0 * pos[1], 1000.0 * pos[2], r, p, y)
-        raw.add_pose(sample, 0.005, k / RATE)
+        raw.add_pose(sample, 0.005)
         f.add_pose(sample, 0.005, k, RATE)
         for a, b in zip(raw.get_latest_pose(), f.get_latest_pose()):
-            assert np.array_equal(a, b)
-        for a, b in zip(raw.get_latest_velocity(), f.get_latest_velocity()):
             assert np.array_equal(a, b)
         assert raw.is_ready() == f.is_ready()
