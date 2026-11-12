@@ -273,7 +273,7 @@ class ViconStreamNode(Node):
                         f"Vicon dropped a frame for `{object_name}`: {e}",
                         throttle_duration_sec=1.0,
                     )
-                    continue  # publishing now would repeat the previous frame under a new stamp
+                    continue
 
                 estimate, stamp = tracked_object.buffer.get_frame_state()
                 if stamp is not None:  # capture time from the Vicon clock, free of host delays
@@ -375,16 +375,15 @@ class ViconStreamNode(Node):
                         throttle_duration_sec=1.0,
                     )
                 continue
-            estimate, _ = tracked_object.buffer.get_filtered_state()  # moved to now
+            estimate = tracked_object.buffer.get_filtered_state()  # predicted to now
             if estimate is None:
                 continue
-            v_body = estimate.R.T @ estimate.v  # m/s, child frame
-            ang_v_body = estimate.w  # rad/s, child frame
             m = np.eye(4)
             m[:3, :3] = estimate.R
-
             x, y, z = estimate.p
             roll, pitch, yaw = tf_transformations.euler_from_matrix(m, "sxyz")
+            v_body = estimate.R.T @ estimate.v  # m/s, child frame
+            ang_v_body = estimate.w  # rad/s, child frame
             states = np.array(
                 [
                     x,

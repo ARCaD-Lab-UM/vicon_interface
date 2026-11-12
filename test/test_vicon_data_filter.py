@@ -46,11 +46,6 @@ def make_filter(**overrides):
     return ViconDataFilter(6, WINDOW, **{**PARAMS, **overrides})
 
 
-def filtered(f, now=None):
-    """Return the filter's estimate at now (host monotonic), as odometry/filtered reads it."""
-    return f.get_filtered_state(now)[0]
-
-
 def node_angles(roll, pitch, yaw):
     """Do what vicon_stream_node does with the SDK's XYZ Euler triple."""
     q = tf_transformations.quaternion_from_euler(roll, pitch, yaw, 'rxyz')
@@ -65,7 +60,8 @@ def sdk_angles(R):
 
 
 def feed(f, clock, k, pos_m, rpy, latency=0.0, delay=0.0, frame_number=None, frame_rate=RATE):
-    """Run one timer tick, then deliver frame k, captured at k * DT, latency + delay seconds later.
+    """
+    Run one timer tick, then deliver frame k, captured at k * DT, latency + delay seconds later.
 
     latency is what the SDK reports; delay is host-side waiting that the SDK does not report.
     """
@@ -90,8 +86,8 @@ def test_startup_waits_for_a_full_window_then_publishes(clock):
     feed(f, clock, WINDOW - 1, v * (WINDOW - 1) * DT, (0.0, 0.0, 0.0))
     assert f.kf_resets_ == 1
     assert f.update() is True
-    est, stamp = f.get_filtered_state()
-    assert stamp == pytest.approx(clock.t)  # latency 0: captured now
+    est = f.get_filtered_state()
+    assert f.get_frame_state()[1] == pytest.approx(clock.t)  # latency 0: captured now
     est.p[:] = 99.0  # the getter hands out copies
     est.v[:] = 99.0
     assert not np.any(f.kf_.state().p == 99.0) and not np.any(f.kf_.state().v == 99.0)
@@ -102,7 +98,7 @@ def test_constant_velocity_is_tracked_exactly(clock):
     v = np.array([0.3, -0.1, 0.05])
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.1, -0.2, 0.5))
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(est.v, v, atol=1e-4)
     assert np.allclose(est.p, v * 199 * DT, atol=1e-5)
 
@@ -114,12 +110,12 @@ def test_latency_is_compensated_by_predicting_to_now(clock):
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), latency=latency)
     now = clock.t - 100.0  # the last frame arrived latency after its capture
-    est, stamp = f.get_filtered_state()
+    est = f.get_filtered_state()
     assert np.allclose(est.p, v * now, atol=1e-5)  # position at now, not at the frame time
-    assert np.isclose(stamp, 100.0 + 199 * DT)  # the capture time on the host clock
-    later = filtered(f, now=clock.t + 0.005)
+    assert np.isclose(f.get_frame_state()[1], 100.0 + 199 * DT)  # capture time on the host clock
+    later = f.get_filtered_state(now=clock.t + 0.005)
     assert np.allclose(later.p, v * (now + 0.005), atol=1e-5)
-    assert np.allclose(filtered(f).p, est.p)  # looking ahead does not move the filter
+    assert np.allclose(f.get_filtered_state().p, est.p)  # looking ahead does not move the filter
 
 
 def test_the_prediction_to_now_is_capped_at_max_delay(clock):
@@ -128,7 +124,7 @@ def test_the_prediction_to_now_is_capped_at_max_delay(clock):
     latency = 0.05  # well above the 20 ms cap
     for k in range(200):
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), latency=latency)
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(est.p, v * (199 * DT + 0.02), atol=1e-5)  # by the cap, not the latency
     std_p = PARAMS['measurement_std'][0]
     assert np.array_equal(f.kf_.R_trans_, std_p ** 2 * np.eye(3))  # R is never rescaled
@@ -146,7 +142,7 @@ def test_dropped_frames_and_host_delays_do_not_reach_the_velocity(clock):
         delay = rng.uniform(0.0, 0.9 * DT)  # s, waiting the SDK latency does not include
         feed(f, clock, k, v * k * DT, (0.0, 0.0, 0.0), delay=delay)
         if i >= 100:
-            err.append(np.max(np.abs(filtered(f).v - v)))
+            err.append(np.max(np.abs(f.get_filtered_state().v - v)))
     assert max(err) < 1e-4
 
 
@@ -163,7 +159,7 @@ def test_sinusoid_velocity_error_is_small(clock):
             v_true = np.array([0.2 * np.pi * np.cos(2 * np.pi * t), 0.0,
                                0.08 * np.pi * np.cos(4 * np.pi * t)])
             v_fd = (positions[-1] - positions[-WINDOW]) / ((WINDOW - 1) * DT)
-            err_kf.append(np.linalg.norm(filtered(f).v - v_true))
+            err_kf.append(np.linalg.norm(f.get_filtered_state().v - v_true))
             err_fd.append(np.linalg.norm(v_fd - v_true))
     rms_kf = np.sqrt(np.mean(np.square(err_kf)))
     rms_fd = np.sqrt(np.mean(np.square(err_fd)))
@@ -181,7 +177,7 @@ def test_static_object_filtered_velocity_is_quieter_than_the_finite_difference(c
         feed(f, clock, k, pos, (0.0, 0.0, 0.0))
         positions.append(pos)
         if k >= 100:
-            v_kf.append(filtered(f).v)
+            v_kf.append(f.get_filtered_state().v)
             v_fd.append((positions[-1] - positions[-WINDOW]) / ((WINDOW - 1) * DT))
     std_kf = np.std(np.array(v_kf), axis=0)
     std_fd = np.std(np.array(v_fd), axis=0)
@@ -197,7 +193,7 @@ def test_yaw_wrap_does_not_disturb_the_filtered_estimate(clock):
         t = k * DT
         feed(f, clock, k, v * t, (0.0, 0.0, np.pi - 1.2 + rate * t))
         if k >= 100:
-            est = filtered(f)
+            est = f.get_filtered_state()
             assert np.allclose(est.v, v, atol=1e-4)
             assert np.allclose(est.w, [0.0, 0.0, rate], atol=1e-6)
 
@@ -208,9 +204,9 @@ def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(
     heading = so3_exp(np.array([0.0, 0.0, np.pi / 2]))
     for k in range(250):
         feed(f, clock, k, np.zeros(3), sdk_angles(heading @ so3_exp(w_body * k * DT)))
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(so3_log(est.R.T @ heading @ so3_exp(w_body * 249 * DT)), 0.0, atol=1e-6)
-    assert np.allclose(est.w, w_body, atol=1e-5)  # the Euler-rate twist reads [0, -1, 0] here
+    assert np.allclose(est.w, w_body, atol=1e-5)
 
 
 def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock):
@@ -237,7 +233,7 @@ def test_a_glitch_frame_is_rejected_and_does_not_reach_the_velocity(clock):
         glitch = np.array([0.05, 0.0, 0.0]) if k == 150 else 0.0  # m, one swapped marker
         feed(f, clock, k, v * k * DT + glitch, (0.0, 0.0, 0.0))
         if k >= 150:
-            assert np.allclose(filtered(f).v, v, atol=1e-4)
+            assert np.allclose(f.get_filtered_state().v, v, atol=1e-4)
     assert f.kf_rejections_ == 1 and f.kf_resets_ == 1
 
 
@@ -275,7 +271,7 @@ def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
         results.append(f.update())
     assert all(results[:25])  # up to 100 ms: still online, the output is a prediction
     assert not any(results[25:])  # after the timeout
-    held = filtered(f)
+    held = f.get_filtered_state()
     assert np.allclose(held.p, v * (49 * DT + PARAMS['max_delay']), atol=1e-5)  # held at the cap
     frozen = f.kf_.state()
     clock.t += DT
@@ -290,7 +286,7 @@ def test_offline_gap_pauses_the_filter_and_resets_it_on_return(clock):
         if j < WINDOW - 1:
             assert f.update() is False
     assert f.update() is True
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(est.v, v, atol=1e-3)
     assert np.allclose(est.p, v * (k0 + 39) * DT, atol=1e-4)
 
@@ -306,7 +302,7 @@ def test_a_nan_frame_is_skipped_and_the_filter_recovers(clock):
         state = f.kf_.state()
         assert np.all(np.isfinite(state.p)) and np.all(np.isfinite(state.R))
     assert f.kf_resets_ == 1  # the next frame is just a two-frame step
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(est.v, v, atol=1e-3)
     assert np.allclose(est.p, v * 49 * DT, atol=1e-4)
 
@@ -322,7 +318,7 @@ def test_a_restarted_frame_count_restarts_the_filter(clock):
         warm = j >= WINDOW - 1  # the restarted filter starts at rest: it warms up as at start
         assert (f.get_frame_state()[0] is not None) == warm and f.update() == warm
     assert f.kf_resets_ == 2
-    est = filtered(f)
+    est = f.get_filtered_state()
     assert np.allclose(est.v, v, atol=1e-3)
     assert np.allclose(est.p, v * 99 * DT, atol=1e-4)
 
@@ -348,7 +344,7 @@ def test_without_a_frame_rate_the_filter_waits(clock):
             warm = k >= 70 + WINDOW - 1  # restarted at rest: no zero velocity on the topics
             assert (f.get_frame_state()[0] is not None) == warm and f.update() == warm
     assert f.kf_resets_ == 2
-    assert np.allclose(filtered(f).v, v, atol=1e-3)
+    assert np.allclose(f.get_filtered_state().v, v, atol=1e-3)
 
 
 def test_raw_buffer_outputs_are_unchanged_by_the_filter(clock):

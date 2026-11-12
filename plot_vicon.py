@@ -153,7 +153,6 @@ def build_figure(traces, window):
         for lbl, color in zip(XYZ_LABELS, AXIS_COLORS):
             per_object["pos"].append(ax_pos.plot([], [], color=color, lw=1.5, label=lbl)[0])
             per_object["lin"].append(ax_lin.plot([], [], color=color, lw=1.4, label=lbl)[0])
-        for lbl, color in zip(XYZ_LABELS, AXIS_COLORS):
             per_object["ang"].append(ax_ang.plot([], [], color=color, lw=1.4, label=lbl)[0])
         lines[name] = per_object
 

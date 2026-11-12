@@ -1,4 +1,5 @@
-"""Kalman filter of a Vicon rigid body's pose, without an IMU.
+"""
+Kalman filter of a Vicon rigid body's pose, without an IMU.
 
 Position lives in the world frame, orientation on SO(3) with its error in the body frame,
 R = R_hat exp([d]x). Each axis carries its value and its rate, constant up to a white
@@ -55,7 +56,8 @@ def so3_right_jacobian(phi):
 
 
 def kinematic_blocks(dt):
-    """Return (F, Q) of one axis over dt (s): its value and its rate.
+    """
+    Return (F, Q) of one axis over dt (s): its value and its rate.
 
     The rate's derivative is white noise of unit spectral density.
     """
@@ -91,7 +93,8 @@ class PoseEstimate:
     P_cross: np.ndarray = None  # covariance of (p, v) with (d, w); None is zero
 
     def transported(self, offset_xyz, offset_R):
-        """Return the estimate of a frame fixed on the body.
+        """
+        Return the estimate of a frame fixed on the body.
 
         The frame's origin is offset_xyz (m, body frame), its orientation offset_R (body from
         frame). The rigid-body formulas move the state: p + R d, v + R (w x d), R offset_R and
@@ -116,7 +119,8 @@ class PoseEstimate:
             P_trans=P[:6, :6], P_rot=P[6:, 6:], P_cross=P[:6, 6:])
 
     def odometry_covariances(self):
-        """Return the (pose, twist) 6x6 covariances in nav_msgs/Odometry's conventions.
+        """
+        Return the (pose, twist) 6x6 covariances in nav_msgs/Odometry's conventions.
 
         pose: position, then rotation about the world axes, in the world frame. twist: linear,
         then angular velocity, in the body frame.
@@ -141,7 +145,8 @@ class PoseFilter:
 
     def __init__(self, noise_psd, measurement_std, initial_std, gate, max_rejections, reset_gap,
                  rot_huber_k=0.0):
-        """Build the filter.
+        """
+        Build the filter.
 
         noise_psd: spectral densities of the white acceleration, m^2/s^3 for the translation and
             rad^2/s^3 for the rotation.
@@ -182,10 +187,6 @@ class PoseFilter:
         self.w_ = np.zeros(3)  # rad/s, body
         self.P_rot_ = self.P0_rot_.copy()
 
-    @property
-    def initialized(self):
-        return self.initialized_
-
     def reset(self, t, p, R):
         """Restart at rest at time t (s) from the pose p (m, world) and R (world from body)."""
         self.t_ = float(t)
@@ -199,7 +200,8 @@ class PoseFilter:
         self.initialized_ = True
 
     def update(self, t, p, R):
-        """Move to time t (s) and correct with the measured pose.
+        """
+        Move to time t (s) and correct with the measured pose.
 
         Return 'reset', 'accepted', 'rejected' or 'stale'. A frame further than reset_gap from
         the last, either way (a gap, or a restarted Vicon clock), resets the filter.

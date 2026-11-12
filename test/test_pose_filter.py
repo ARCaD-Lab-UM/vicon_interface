@@ -263,7 +263,7 @@ def test_the_angular_velocity_is_the_body_one_at_a_heading_of_ninety_degrees():
     w_body = np.array([1.0, 0.0, 0.0])  # rad/s, rolling about the body's x axis
     for k in range(200):
         f.update(k * DT, np.zeros(3), rot_z(math.pi / 2) @ so3_exp(w_body * k * DT))
-    assert np.allclose(f.state().w, w_body, atol=1e-7)  # the Euler-rate twist read [0, -1, 0]
+    assert np.allclose(f.state().w, w_body, atol=1e-7)
 
 
 def test_yaw_through_pi_does_not_disturb_the_estimate():
@@ -348,7 +348,7 @@ def test_a_bad_parameter_is_refused_by_name():
     with pytest.raises(ValueError, match=sizes):
         PoseFilter((1.0,), **FILTER_ARGS)
     with pytest.raises(ValueError, match=sizes):
-        PoseFilter((1.0, 1.0), **{**FILTER_ARGS, 'initial_std': (1.0, 2.0, 5.0, 20.0)})
+        PoseFilter((1.0, 1.0), **{**FILTER_ARGS, 'initial_std': (1.0, 2.0, 5.0)})
     with pytest.raises(ValueError, match='PoseFilter: noise_psd must be >= 0'):
         PoseFilter((-1.0, 1.0), **FILTER_ARGS)
     with pytest.raises(ValueError, match='PoseFilter: gate takes 2 entries > 0'):

@@ -6,7 +6,8 @@ import tf_transformations
 
 class ViconDataBuffer:
     def __init__(self, state_dim, rolling_window_size, offset_xyz=None, offset_R=None) -> None:
-        """Rolling window of the reported frame's poses, and the tracked rigid body's latest pose.
+        """
+        Buffer the reported frame's recent poses and the tracked rigid body's latest pose.
 
         offset_xyz / offset_R describe the pose of the frame to report relative to the tracked rigid
         body's own frame (T_marker->child): the child origin expressed in marker coordinates,

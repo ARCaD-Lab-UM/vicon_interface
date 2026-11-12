@@ -26,7 +26,8 @@ This page gives the model, where each equation lives in the code, what changed f
 - With g1 moved by hand, against what `g1_deploy`'s code published: velocity error RMS 47.0 to
   24.6 mm/s, its frame-to-frame jumps 287 to 31 mm/s; angular velocity 188 to 89 mrad/s, jumps 742
   to 100 mrad/s. The price is lag: about 20 ms on velocity, 20 to 28 ms on angular velocity.
-- The node ran end to end under real ROS 2 against a replayed SDK. It has not yet run on the robot.
+- The node ran end to end under real ROS 2 against a replayed SDK, and has since run on the robot with
+  the real Vicon SDK.
 
 ## The problem
 
@@ -330,26 +331,20 @@ $\mathbf x = (\mathbf p_b, \mathbf v_b)$ of base_link in $\mathcal W$ and measur
 3. **The finite difference as a measurement.** Its errors are correlated from frame to frame,
    because the windows overlap, and they carry defects 1 and 2 and the flicker; the filter could
    only lag them. $\mathbf Q$ did not follow the time between predictions, and predictions followed the
-   timer, not the frames. Now only poses are measured, on the frame clock, with $\mathbf Q(\delta t)$. The
-   619a73e draft had already moved the filter to the frame clock with a position-only measurement.
+   timer, not the frames. Now only poses are measured, on the frame clock, with $\mathbf Q(\delta t)$.
 4. **base_link filtered directly.** The flicker times the lever arm entered the position. Now the
    rigid body is filtered and the estimate transported.
 5. **A frame that failed to parse went out twice.** The `continue` after the parse error was
    commented out, so the previous frame was published again under a new stamp on `odometry/<obj>`,
    `vicon_pose/<obj>` and TF. Reproduced under ROS. Now the frame is skipped.
 6. **Uncapped rotation prediction.** `odometry/filtered` pushed the Euler angles forward by the whole
-   frame age, up to `vicon_offline_timeout`, at the finite-difference rate. The draft then capped the
-   position but not the angles: in a 60 ms gap the yaw ran 60 ms ahead and the position 20 ms. Now
-   both come from one prediction, capped at `kf_max_delay`.
+   frame age, up to `vicon_offline_timeout`, at the finite-difference rate. Now the position and the
+   angles come from one prediction, capped at `kf_max_delay`.
 7. **`poll_vicon_dt` equal to the frame period.** The sleep that paces the loop overshoots a little,
    so the loop fell behind frame after frame until it dropped one: every 0.26 s, 1.4 % of the
    frames, with a 0 to 4 ms sawtooth in the pick-up delay. At 2 ms the simulation dropped no frame
    in motion and one at rest.
 8. **No covariances** on the odometry topics. Now the filter's, moved to base_link.
-
-Two more were in the 619a73e draft only, and are fixed as well. Without a frame rate,
-`odometry/filtered` kept publishing a frozen state. A restart while frames kept coming published the
-at-rest state at once, a frame of zero velocity on both topics.
 
 ### Parameters
 
@@ -405,10 +400,10 @@ was touched.
 | velocity (mm/s) | 47.0 / 287 | 24.6 / 31.1 | 3.32 / 32.6 | 1.81 / 7.04 |
 | angular velocity (mrad/s) | 188 / 742 | 89.0 / 99.8 | 12.0 / 112 | 5.83 / 21.4 |
 
-The `g1_deploy` path is what the node published on `odometry/g1` during the recordings: Vicon's pose
-and the host-timed finite difference. That code is the same on `g1_deploy` and on the 619a73e draft
-the recordings ran. "Now" is the final filter replayed on the same frames. `g1_deploy`'s own
-`odometry/filtered` was not recorded, so it has no column.
+The `g1_deploy` path is what the node published on `odometry/g1` during the recordings, with
+`g1_deploy`'s code: Vicon's pose and the host-timed finite difference. "Now" is the final filter
+replayed on the same frames. `g1_deploy`'s own `odometry/filtered` was not recorded, so it has no
+column.
 
 - Jumps fall 3.6 to 9 times on every output. Velocity and angular-velocity RMS fall by half.
 - Rotation RMS in motion rises from 1.49 to 1.57 mrad: smoothing the flicker costs some lag. Its
@@ -444,6 +439,7 @@ unparsable frame, gaps of 60 and 300 ms, 200 ms without a frame rate, g1 missing
 - The densities fit g1 moved by hand. Walking has sharper accelerations, which a constant-velocity
   model shows as lag. If the velocity looks late on the robot, raise `kf_noise_psd`; if it looks
   noisy, lower it. The ratios $\sigma_a^2/\sigma_p^2$ and $\sigma_\alpha^2/\sigma_\theta^2$ are what count.
-- Not verified yet: the real SDK's frame delivery, the lab machine's load and the robot's own motion.
+- The node has run on the robot with the real Vicon SDK. The scores above still come from the
+  hand-moved recordings, not from the robot's own motion.
 - The recordings and the script behind these numbers were removed from the tree. They remain in the
   history at f404fb6 (`data/2026-11-04_g1_static_dynamic/`, `replay_vicon_log.py`).

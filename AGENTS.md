@@ -67,10 +67,10 @@ velocity and height.
 - Each new frame (frame number changed) gives one `add_pose()` per object: mm to m, Vicon's XYZ Euler
   triple re-expressed as `sxyz`, the frame offset applied for `vicon_pose` and TF.
 - `ViconDataFilter` adds `PoseFilter` on the Vicon clock: the rigid body's position and SO(3)
-  orientation with their rates (constant velocity), only the pose measured. Per
-  frame the poll thread steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`),
-  gates the frame and corrects; host time never enters `dt`. The timer only predicts to its publish
-  time (at most `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
+  orientation with their rates (constant velocity), only the pose measured. Per frame the poll thread
+  steps it by the frame-number step over the frame rate (exact `F(dt)`, `Q(dt)`), gates the frame and
+  corrects; host time never enters `dt`. The timer only predicts to its publish time (at most
+  `kf_max_delay`) via the minimum host-minus-Vicon offset over `kf_clock_window`. After
   `vicon_offline_timeout` without a frame the `Daemon` stops publishing; the next frame resets the
   filter, which publishes again after `rolling_window_size` frames, also how it starts and how it
   resumes after any other restart (a frame step too long to fuse, a restarted frame count).
