@@ -210,7 +210,7 @@ def test_orientation_and_body_rate_follow_the_frames_at_a_ninety_degree_heading(
 
 
 def test_the_filter_follows_the_rigid_body_and_reports_the_child(clock):
-    offset_xyz = np.array([0.0, 0.0, -0.266])  # m, g1 below its rigid body, turned in yaw
+    offset_xyz = np.array([0.0, 0.0, -0.266])  # m, below the rigid body, turned in yaw
     offset_R = so3_exp(np.array([0.0, 0.0, np.pi]))
     f = make_filter(offset_xyz=offset_xyz, offset_R=offset_R)
     v = np.array([0.3, -0.1, 0.05])  # m/s, the rigid body's origin

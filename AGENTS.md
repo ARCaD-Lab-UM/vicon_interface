@@ -99,8 +99,8 @@ p_child = p_marker + R·d        v_child = v_marker + R·(ω × d)        ω_chi
   0.27 mm per mrad at 0.266 m; tracking the body keeps it in the rotation channel, which can then be
   smoothed on its own (`kf_noise_psd`) without slowing the translation.
 
-The YAML's objects today (`g1`, `box`) sit below their rigid bodies (negative z) with axes turned about
-180° in yaw, hence the yaw entries; if a rigid body is redefined, change these entries, nothing
+The YAML's objects today (`g1`, `box`) sit below their rigid bodies (negative z), axes aligned with
+theirs (zero rpy offsets); if a rigid body is redefined, change these entries, nothing
 downstream. Verified to machine precision against analytic truth for zero, yaw-90° and 10/-20/45°
 offsets; with both offsets zero the output is bit-identical to the pre-offset code. Pitch near ±90°
 degrades the published Euler angles, not the twist.

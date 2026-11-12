@@ -10,6 +10,9 @@ Summary: no Jazzy-specific code change was needed beyond a deprecated logger cal
 environment: a Python 3.12 build of `pyvicon-datastream`, `tf_transformations` from apt, and a clean
 workspace build. The package has not yet been run against a live tracker on Jazzy.
 
+Update 2026-11-12: the node has since run on the robot against the live Vicon tracker, as reported by
+the pose filter's author when it was merged into `main`.
+
 ## Package changes
 
 - `rclpy`'s `Logger.warn()` is deprecated in Jazzy; the node calls `warning()`, which Humble also has.
